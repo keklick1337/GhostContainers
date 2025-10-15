@@ -1,0 +1,67 @@
+{
+  "name": "Ubuntu Desktop",
+  "description": "Ubuntu 22.04 with Firefox and basic tools (minimal, Qubes-style)",
+  "default_user": "user",
+  "default_uid": 1000,
+  "default_gid": 1000,
+  "gui_support": true,
+  "packages": [
+    "firefox",
+    "chromium-browser",
+    "libreoffice",
+    "gimp",
+    "vlc",
+    "nautilus",
+    "xterm",
+    "python3",
+    "git"
+  ],
+  "apps": [
+    {
+      "name": "Firefox (Software Rendering)",
+      "command": "MOZ_X11_EGL=0 MOZ_DISABLE_CONTENT_SANDBOX=1 LIBGL_ALWAYS_SOFTWARE=1 firefox"
+    },
+    {
+      "name": "Firefox (Clean)",
+      "command": "firefox"
+    },
+    {
+      "name": "Chromium",
+      "command": "chromium-browser --no-sandbox --disable-gpu"
+    },
+    {
+      "name": "LibreOffice Writer",
+      "command": "libreoffice --writer"
+    },
+    {
+      "name": "LibreOffice Calc",
+      "command": "libreoffice --calc"
+    },
+    {
+      "name": "GIMP",
+      "command": "gimp"
+    },
+    {
+      "name": "VLC Media Player",
+      "command": "vlc"
+    },
+    {
+      "name": "Nautilus File Manager",
+      "command": "nautilus"
+    },
+    {
+      "name": "XTerm",
+      "command": "xterm"
+    }
+  ],
+  "build_args": {
+    "USER_NAME": "user",
+    "USER_UID": "1000",
+    "USER_GID": "1000"
+  },
+  "environment": {
+    "DISPLAY": ":0",
+    "XAUTHORITY": "/tmp/.Xauthority"
+  },
+  "network": "bridge"
+}

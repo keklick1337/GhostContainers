@@ -1,0 +1,25 @@
+{
+  "xserver": {
+    "auto_detect": true,
+    "display": ":0",
+    "xauthority": "/home/user/.Xauthority"
+  },
+  "docker": {
+    "default_user_uid": 1000,
+    "default_user_gid": 1000,
+    "shared_folders_base": "./shared"
+  },
+  "network": {
+    "default_mode": "bridge",
+    "whonix_gateway": "whonix-gateway"
+  },
+  "gui": {
+    "window_width": 1200,
+    "window_height": 800,
+    "theme": "clam"
+  },
+  "templates": {
+    "directory": "templates",
+    "auto_build": true
+  }
+}

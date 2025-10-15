@@ -1,0 +1,23 @@
+{
+  "name": "Alpine Linux 3.22",
+  "description": "Lightweight Alpine Linux 3.22 with Firefox, Python and development tools",
+  "default_user": "user",
+  "default_uid": 1000,
+  "default_gid": 1000,
+  "gui_support": true,
+  "packages": [
+    "git",
+    "python3"
+  ],
+  "apps": [],
+  "build_args": {
+    "USER_NAME": "user",
+    "USER_UID": "1000",
+    "USER_GID": "1000"
+  },
+  "environment": {
+    "DISPLAY": ":0",
+    "XAUTHORITY": "/tmp/.Xauthority"
+  },
+  "network": "bridge"
+}

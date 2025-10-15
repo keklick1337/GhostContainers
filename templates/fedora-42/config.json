@@ -1,0 +1,38 @@
+{
+  "name": "Fedora 42",
+  "description": "Fedora 42 with Firefox, Chromium and development tools",
+  "default_user": "user",
+  "default_uid": 1000,
+  "default_gid": 1000,
+  "gui_support": true,
+  "packages": [
+    "firefox",
+    "chromium",
+    "git",
+    "python3"
+  ],
+  "apps": [
+    {
+      "name": "Firefox (Software Rendering)",
+      "command": "MOZ_X11_EGL=0 MOZ_DISABLE_CONTENT_SANDBOX=1 LIBGL_ALWAYS_SOFTWARE=1 firefox"
+    },
+    {
+      "name": "Firefox (Clean)",
+      "command": "firefox"
+    },
+    {
+      "name": "Chromium",
+      "command": "chromium --no-sandbox --disable-gpu"
+    }
+  ],
+  "build_args": {
+    "USER_NAME": "user",
+    "USER_UID": "1000",
+    "USER_GID": "1000"
+  },
+  "environment": {
+    "DISPLAY": ":0",
+    "XAUTHORITY": "/tmp/.Xauthority"
+  },
+  "network": "bridge"
+}

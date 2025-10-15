@@ -1,0 +1,44 @@
+
+# Tor configuration for OSINT forum parsing with bridges
+# Use obfs4 bridges for better anonymity in restricted countries
+
+# Basic Tor settings
+SocksPort 0.0.0.0:9050
+ControlPort 0.0.0.0:9051
+CookieAuthentication 1
+ExitRelay 0
+DataDirectory /var/lib/tor
+
+# Use bridges with obfs4
+UseBridges 1
+ClientTransportPlugin obfs4 exec /usr/bin/obfs4proxy
+
+# Add your obfs4 bridges here (get them from https://bridges.torproject.org/)
+# These are working bridges as of 2025:
+Bridge obfs4 107.175.130.5:9301 9F498B53C11D8F0A4B08604661117C2360D451BD cert=PRD9nBB/dVoEU5OrXbCkO2/qGZ9kZ2Rfz/7RK78mSyvLLXmcdRIW6OC6n9tIoqWvT2TNSQ iat-mode=0
+Bridge obfs4 185.177.207.96:12346 C643C8F915ABFF6D8B30634F458E1B0D08D069EB cert=p9L6+25s8bnfkye1ZxFeAE4mAGY7DH4Gaj7dxngIIzP9BtqrHHwZXdjMK0RVIQ34C7aqZw iat-mode=2
+Bridge obfs4 49.13.126.113:17521 547A3A858B92D28C584FD0DA3B1E932467B244BA cert=j5iBsig0Q0FWbyzOBRAcqoO3vZ6FSgvfsYV2Fv3sDBlkA6lrzsu5G4NNcZJWnsa8HXC9cg iat-mode=0
+Bridge obfs4 95.217.11.29:22134 9859875C752128125D3179F90BA6351744B09040 cert=W+qSHr6JcFY6UyJiXR3Ec5I5bYHFwDAXNq8HRQU3C56h/aJB8PQqbr8Sq04zKvhEWGbxEw iat-mode=0
+
+# Security settings
+SafeLogging 1
+Log notice stdout
+
+# Circuit preferences for better connectivity
+CircuitBuildTimeout 60
+KeepalivePeriod 60
+NewCircuitPeriod 120
+MaxCircuitDirtiness 600
+
+# Retry settings for bridges
+LearnCircuitBuildTimeout 0
+CircuitStreamTimeout 20
+CircuitIdleTimeout 1800
+
+# Directory settings
+DirReqStatistics 0
+EntryStatistics 0
+ExitPortStatistics 0
+
+# Client settings
+ClientOnly 1

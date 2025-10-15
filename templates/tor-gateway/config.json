@@ -1,0 +1,24 @@
+{
+  "name": "Tor Gateway",
+  "description": "Tor transparent proxy gateway for anonymous routing with supervisord",
+  "default_user": "gateway",
+  "default_uid": 1000,
+  "default_gid": 1000,
+  "gui_support": false,
+  "packages": [
+    "tor",
+    "supervisor",
+    "iptables"
+  ],
+  "apps": [],
+  "build_args": {},
+  "environment": {},
+  "network": "bridge",
+  "ports": {
+    "9050": "SOCKS proxy",
+    "9040": "Transparent proxy",
+    "5353": "DNS",
+    "9051": "Control port"
+  },
+  "notes": "Tor transparent proxy gateway. Edit /etc/tor/torrc to configure bridges. Traffic routing requires iptables rules in connected containers."
+}

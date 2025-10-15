@@ -1,0 +1,43 @@
+{
+  "name": "Debian Trixie",
+  "description": "Debian Trixie with X11, Firefox, and full development toolkit",
+  "default_user": "user",
+  "default_uid": 1000,
+  "default_gid": 1000,
+  "gui_support": true,
+  "packages": [
+    "firefox-esr",
+    "git",
+    "vim",
+    "htop",
+    "x11-apps"
+  ],
+  "apps": [
+    {
+      "name": "Firefox with hardware acceleration (X11)",
+      "command": "MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 firefox-esr --enable-webrender"
+    },
+    {
+      "name": "Firefox for Wayland",
+      "command": "MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_ENABLE_WAYLAND=1 firefox-esr --enable-webrender"
+    },
+    {
+      "name": "Firefox ESR (Clean)",
+      "command": "firefox-esr"
+    },
+    {
+      "name": "xeyes (X11 Test)",
+      "command": "xeyes"
+    }
+  ],
+  "build_args": {
+    "USER_NAME": "user",
+    "USER_UID": "1000",
+    "USER_GID": "1000"
+  },
+  "environment": {
+    "DISPLAY": ":0",
+    "XAUTHORITY": "/tmp/.Xauthority"
+  },
+  "network": "bridge"
+}
