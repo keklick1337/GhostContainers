@@ -135,10 +135,7 @@ class ImageManagerPlugin(TabPlugin):
                     version = 'latest'
                 
                 # Name
-                name_item = QTableWidgetItem(name)
-                if 'ghostcontainers-' in name:
-                    name_item.setBackground(QColor(240, 248, 255))  # Light blue
-                self.table.setItem(row, 0, name_item)
+                self.table.setItem(row, 0, QTableWidgetItem(name))
                 
                 # Tag
                 self.table.setItem(row, 1, QTableWidgetItem(version))
