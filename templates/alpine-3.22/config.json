@@ -7,9 +7,27 @@
   "gui_support": true,
   "packages": [
     "git",
-    "python3"
+    "python3",
+    "firefox"
   ],
-  "apps": [],
+  "apps": [
+    {
+      "name": "Firefox with hardware acceleration (X11)",
+      "command": "MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 firefox --enable-webrender"
+    },
+    {
+      "name": "Firefox for Wayland",
+      "command": "MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_ENABLE_WAYLAND=1 firefox --enable-webrender"
+    },
+    {
+      "name": "Firefox (Clean)",
+      "command": "firefox"
+    },
+    {
+      "name": "xeyes (X11 Test)",
+      "command": "xeyes"
+    }
+  ],
   "build_args": {
     "USER_NAME": "user",
     "USER_UID": "1000",

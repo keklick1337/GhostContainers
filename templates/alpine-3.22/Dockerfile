@@ -16,6 +16,13 @@ RUN apk add --no-cache \
     xorg-server \
     python3 \
     py3-pip \
+    fontconfig \
+    firefox \
+    font-dejavu \
+    font-liberation \
+    font-noto \
+    font-noto-cjk \
+    font-noto-emoji \
     build-base
 
 # Create user with sudo
