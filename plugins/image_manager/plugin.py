@@ -79,6 +79,7 @@ class ImageManagerPlugin(TabPlugin):
         ])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)  # Read-only
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.table)
         
