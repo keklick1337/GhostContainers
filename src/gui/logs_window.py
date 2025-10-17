@@ -82,11 +82,18 @@ class ContainerLogsWindow(QDialog):
         info_layout.addStretch()
         
         # Kill button (for stopping hung processes)
-        kill_btn = QPushButton("Kill Process")
-        kill_btn.setStyleSheet("background-color: #ff5555; color: white; font-weight: bold;")
-        kill_btn.setToolTip("Send SIGKILL to main process (use if hung)")
-        kill_btn.clicked.connect(self._kill_process)
+        kill_btn = QPushButton("Stop (Ctrl+C)")
+        kill_btn.setStyleSheet("background-color: #ffb86c; color: black; font-weight: bold;")
+        kill_btn.setToolTip("Send SIGINT (Ctrl+C) to main process")
+        kill_btn.clicked.connect(self._send_sigint)
         info_layout.addWidget(kill_btn)
+        
+        # Force Kill button (for really hung processes)
+        force_kill_btn = QPushButton("Force Kill")
+        force_kill_btn.setStyleSheet("background-color: #ff5555; color: white; font-weight: bold;")
+        force_kill_btn.setToolTip("Send SIGKILL (kill -9) if Ctrl+C doesn't work")
+        force_kill_btn.clicked.connect(self._send_sigkill)
+        info_layout.addWidget(force_kill_btn)
         
         # Close button
         close_btn = QPushButton(t('buttons.close'))
@@ -137,22 +144,78 @@ class ContainerLogsWindow(QDialog):
     
     def _on_logs_finished(self, success: bool, message: str):
         """Handle logs stream end"""
-        if success:
-            self.status_label.setText(f"[OK] {message}")
-        else:
-            self.status_label.setText(f"[ERROR] {message}")
+        # Check container status to determine why logs ended
+        try:
+            container = self.docker_manager.client.containers.get(self.container_id)
+            container.reload()
+            status = container.attrs.get('State', {})
+            
+            container_status = status.get('Status', 'unknown')
+            exit_code = status.get('ExitCode', 0)
+            
+            # Display container status in logs
+            self.log_viewer.append_line("\n" + "="*60)
+            
+            if container_status == 'exited':
+                if exit_code == 0:
+                    self.log_viewer.append_line("\033[32m[CONTAINER STOPPED]\033[0m Exited successfully (code 0)")
+                    self.status_label.setText("[OK] Container exited successfully")
+                else:
+                    self.log_viewer.append_line(f"\033[31m[CONTAINER STOPPED]\033[0m Exited with error code {exit_code}")
+                    self.status_label.setText(f"[ERROR] Container exited with code {exit_code}")
+            elif container_status == 'running':
+                self.log_viewer.append_line("\033[36m[INFO]\033[0m Container is still running, logs stream ended")
+                self.status_label.setText("[OK] Logs stream ended (container running)")
+            else:
+                self.log_viewer.append_line(f"\033[33m[CONTAINER STOPPED]\033[0m Status: {container_status}")
+                self.status_label.setText(f"[INFO] Container {container_status}")
+            
+            self.log_viewer.append_line("="*60 + "\n")
+            
+        except Exception as e:
+            # Container might be removed (disposable)
+            self.log_viewer.append_line("\n" + "="*60)
+            self.log_viewer.append_line("\033[35m[CONTAINER REMOVED]\033[0m Container has been removed (disposable)")
+            self.log_viewer.append_line("="*60 + "\n")
+            self.status_label.setText("[OK] Container removed")
+            logger.info(f"Container {self.container_name} was removed (disposable)")
         
         self.logs_thread = None
     
-    def _kill_process(self):
-        """Force kill the main process inside container"""
+    def _send_sigint(self):
+        """Send SIGINT (Ctrl+C) to main process"""
         from PyQt6.QtWidgets import QMessageBox
         
-        reply = QMessageBox.question(
+        try:
+            # Get container
+            container = self.docker_manager.client.containers.get(self.container_id)
+            
+            # Send SIGINT to PID 1 (main process)
+            result = container.exec_run("kill -INT 1", privileged=True)
+            
+            # Log the action
+            self.log_viewer.append_line("\n" + "="*60)
+            self.log_viewer.append_line("\033[33m[SIGINT]\033[0m Sent Ctrl+C to main process")
+            self.log_viewer.append_line("="*60 + "\n")
+            self.status_label.setText("SIGINT sent (Ctrl+C)")
+            
+            logger.info(f"SIGINT sent to main process in container {self.container_name}")
+            
+        except Exception as e:
+            self.log_viewer.append_line(f"\n\033[31m[ERROR]\033[0m Failed to send SIGINT: {e}\n")
+            self.status_label.setText(f"SIGINT failed: {e}")
+            logger.error(f"Failed to send SIGINT to container {self.container_name}: {e}")
+    
+    def _send_sigkill(self):
+        """Force kill all processes (last resort)"""
+        from PyQt6.QtWidgets import QMessageBox
+        
+        reply = QMessageBox.warning(
             self,
-            "Confirm Kill",
-            f"Send SIGKILL (kill -9) to the main process in '{self.container_name}'?\n\n"
-            "This will forcefully terminate the process if it's hung.",
+            "Confirm Force Kill",
+            f"Send SIGKILL (kill -9) to all processes in '{self.container_name}'?\n\n"
+            "⚠️ This is a last resort! Try 'Stop (Ctrl+C)' first.\n"
+            "SIGKILL forcefully terminates processes without cleanup.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -162,16 +225,67 @@ class ContainerLogsWindow(QDialog):
                 # Get container
                 container = self.docker_manager.client.containers.get(self.container_id)
                 
-                # Execute kill -9 1 (PID 1 is the main process in container)
-                exec_result = container.exec_run("kill -9 1", privileged=True)
+                killed_count = 0
                 
-                # Add kill notification with ANSI colors (red)
-                self.log_viewer.append_line("\n" + "="*60)
-                self.log_viewer.append_line("\033[31;1m[SIGKILL]\033[0m Sent SIGKILL to main process (PID 1)")
-                self.log_viewer.append_line("="*60 + "\n")
-                self.status_label.setText("Process killed (SIGKILL sent)")
+                try:
+                    # Try to find and kill all processes except PID 1
+                    # Get process list
+                    ps_result = container.exec_run("ps aux", privileged=True)
+                    
+                    if ps_result.exit_code == 0 and ps_result.output:
+                        # Decode with multiple fallbacks
+                        try:
+                            output_text = ps_result.output.decode('utf-8', errors='replace')
+                        except:
+                            try:
+                                output_text = ps_result.output.decode('latin-1', errors='replace')
+                            except:
+                                output_text = str(ps_result.output)
+                        
+                        processes = output_text.split('\n')
+                        
+                        for line in processes[1:]:  # Skip header
+                            if line.strip():
+                                try:
+                                    parts = line.split(None, 10)
+                                    if len(parts) >= 2:
+                                        pid = parts[1]
+                                        # Skip PID 1 (init process) and ps command
+                                        if pid.isdigit() and pid != '1':
+                                            kill_result = container.exec_run(f"kill -9 {pid}", privileged=True)
+                                            if kill_result.exit_code == 0 or kill_result.exit_code == 1:  # 1 = already dead
+                                                killed_count += 1
+                                                self.log_viewer.append_line(f"\033[33m[SIGKILL]\033[0m Killed PID {pid}")
+                                except Exception as parse_err:
+                                    # Skip malformed lines
+                                    continue
+                    
+                except Exception as ps_err:
+                    logger.warning(f"Failed to parse ps output: {ps_err}, falling back to killall")
+                    # Fallback: use killall to kill all processes
+                    try:
+                        container.exec_run("killall -9 firefox", privileged=True)
+                        container.exec_run("killall -9 chrome", privileged=True)
+                        container.exec_run("killall -9 chromium", privileged=True)
+                        killed_count = 1  # At least tried
+                    except:
+                        pass
                 
-                logger.info(f"SIGKILL sent to main process in container {self.container_name}")
+                # Show results
+                if killed_count > 0:
+                    self.log_viewer.append_line("\n" + "="*60)
+                    self.log_viewer.append_line(f"\033[31;1m[KILLED]\033[0m Terminated {killed_count} process(es)")
+                    self.log_viewer.append_line("="*60 + "\n")
+                    self.status_label.setText(f"Killed {killed_count} process(es)")
+                    logger.info(f"Killed {killed_count} process(es) in container {self.container_name}")
+                else:
+                    # Last resort: kill PID 1
+                    container.exec_run("kill -9 1", privileged=True)
+                    self.log_viewer.append_line("\n" + "="*60)
+                    self.log_viewer.append_line("\033[31;1m[SIGKILL]\033[0m Sent SIGKILL to main process")
+                    self.log_viewer.append_line("="*60 + "\n")
+                    self.status_label.setText("Process killed")
+                    logger.info(f"SIGKILL sent to main process in container {self.container_name}")
                 
             except Exception as e:
                 self.log_viewer.append_line(f"\n\033[31m[ERROR]\033[0m Failed to kill process: {e}\n")
