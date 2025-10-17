@@ -15,6 +15,10 @@ from PyQt6.QtGui import QFont
 
 from ..localization import t
 from .threads import ContainerCreateThread
+from .logs_window import ContainerLogsWindow
+from ..settings_manager import SettingsManager
+import subprocess
+import platform as platform_module
 
 
 class CreateContainerDialog(QDialog):
@@ -116,7 +120,7 @@ class CreateContainerDialog(QDialog):
         startup_layout.addWidget(self.custom_command_edit)
         
         self.external_terminal_check = QCheckBox(t('labels.external_terminal'))
-        self.external_terminal_check.setChecked(True)
+        self.external_terminal_check.setChecked(False)  # Use settings launch_mode by default
         self.external_terminal_check.setVisible(False)
         startup_layout.addWidget(self.external_terminal_check)
         
@@ -129,6 +133,34 @@ class CreateContainerDialog(QDialog):
         self.gui_check = QCheckBox(t('labels.gui_support'))
         self.gui_check.setChecked(True)
         form_layout.addRow("", self.gui_check)
+        
+        # Launch mode selector (for disposable containers)
+        launch_mode_layout = QVBoxLayout()
+        
+        launch_mode_label_layout = QHBoxLayout()
+        launch_mode_label_layout.addWidget(QLabel("Launch Mode:"))
+        self.launch_mode_combo = QComboBox()
+        self.launch_mode_combo.addItem("API (with logs)", "api")
+        self.launch_mode_combo.addItem("Terminal", "terminal")
+        self.launch_mode_combo.addItem("Custom", "custom")
+        
+        # Load default from settings
+        settings = SettingsManager()
+        settings.load()
+        default_mode = settings.get('launch_mode', 'api')
+        index = self.launch_mode_combo.findData(default_mode)
+        if index >= 0:
+            self.launch_mode_combo.setCurrentIndex(index)
+        
+        launch_mode_label_layout.addWidget(self.launch_mode_combo)
+        launch_mode_layout.addLayout(launch_mode_label_layout)
+        
+        # Show logs window checkbox (for API mode)
+        self.show_logs_check = QCheckBox("Show logs window")
+        self.show_logs_check.setChecked(settings.get('show_logs_window', True))
+        launch_mode_layout.addWidget(self.show_logs_check)
+        
+        form_layout.addRow("", launch_mode_layout)
         
         # Platform selector
         platform_layout = QHBoxLayout()
@@ -390,8 +422,38 @@ class CreateContainerDialog(QDialog):
             self.custom_command_edit.setVisible(False)
             self.external_terminal_check.setVisible(False)
     
+    def _setup_xhost_permissions(self):
+        """Setup xhost permissions for X11 access"""
+        system = platform_module.system()
+        
+        if system in ["Darwin", "Linux"]:
+            try:
+                # Add localhost permissions
+                subprocess.run(['xhost', '+localhost'], 
+                             capture_output=True, timeout=2)
+                subprocess.run(['xhost', '+127.0.0.1'], 
+                             capture_output=True, timeout=2)
+                
+                # Add hostname permissions
+                hostname_result = subprocess.run(['hostname'], 
+                                               capture_output=True, 
+                                               text=True, 
+                                               timeout=2)
+                if hostname_result.returncode == 0:
+                    hostname = hostname_result.stdout.strip()
+                    subprocess.run(['xhost', f'+{hostname}'], 
+                                 capture_output=True, timeout=2)
+                
+                self.log_text.append("✓ X11 permissions configured")
+            except Exception as e:
+                self.log_text.append(f"⚠ Could not configure xhost: {e}")
+    
     def _create_container(self):
         """Start container creation"""
+        # Setup X11 permissions first if GUI is enabled
+        if self.gui_check.isChecked():
+            self._setup_xhost_permissions()
+        
         name = self.name_edit.text().strip()
         if not name:
             QMessageBox.warning(self, t('dialogs.error_title'), t('messages.enter_container_name'))
@@ -494,6 +556,11 @@ class CreateContainerDialog(QDialog):
             
             config['environment']['XAUTHORITY'] = '/tmp/.Xauthority'
         
+        # Get launch mode from UI
+        selected_launch_mode = self.launch_mode_combo.currentData()
+        config['launch_mode'] = selected_launch_mode
+        config['show_logs_window'] = self.show_logs_check.isChecked()
+        
         # Handle startup app selection
         app_selection = self.startup_app_combo.currentData()
         
@@ -502,11 +569,13 @@ class CreateContainerDialog(QDialog):
             custom_cmd = self.custom_command_edit.text().strip()
             if custom_cmd:
                 config['startup_command'] = custom_cmd
-                config['use_terminal'] = self.external_terminal_check.isChecked()
+                # Override with terminal mode if external terminal is checked
+                if self.external_terminal_check.isChecked():
+                    config['launch_mode'] = 'terminal'
         elif app_selection != "default" and app_selection:
             # Package/app from list
             config['startup_command'] = app_selection
-            config['use_terminal'] = True  # Run packages in terminal by default
+            # Keep launch_mode from combo selection
         # If "default" - don't set startup_command, container will use Dockerfile CMD
         
         # Fix Firefox popup black screen issue on macOS with XQuartz
@@ -529,6 +598,7 @@ class CreateContainerDialog(QDialog):
         self.create_thread.log_signal.connect(self._append_log)
         self.create_thread.progress_signal.connect(self.progress_bar.setValue)
         self.create_thread.finished_signal.connect(self._creation_finished)
+        self.create_thread.open_logs_signal.connect(self._open_logs_window)
         
         self.create_thread.start()
     
@@ -539,12 +609,35 @@ class CreateContainerDialog(QDialog):
             self.log_text.verticalScrollBar().maximum()
         )
     
+    def _open_logs_window(self, container_id, container_name):
+        """Open logs window for the created container"""
+        # Check if user wants to see logs window (from dialog checkbox)
+        if self.show_logs_check.isChecked():
+            # Create logs window WITHOUT parent so it stays open after dialog closes
+            self.logs_window = ContainerLogsWindow(
+                self.docker_manager,
+                container_id,
+                container_name,
+                None  # No parent - window will be independent
+            )
+            self.logs_window.show()
+    
     def _creation_finished(self, success, message):
         """Handle creation finished"""
         self.button_box.setEnabled(True)
         
+        # Check if user wants to see success messages
+        settings = SettingsManager()
+        settings.load()
+        show_success = settings.get('show_success_messages', True)
+        
         if success:
-            QMessageBox.information(self, t('dialogs.success_title'), message)
+            # Only show message box if enabled in settings
+            # Don't close dialog automatically - let user review logs
+            if show_success:
+                QMessageBox.information(self, t('dialogs.success_title'), message)
+            
+            # Close dialog (logs window will remain open if it was shown)
             self.accept()
         else:
             QMessageBox.critical(self, t('dialogs.error_title'), message)

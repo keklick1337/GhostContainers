@@ -46,6 +46,10 @@ class GhostContainersGUI(QMainWindow):
             from ..localization import init_localization
             init_localization(database_manager=self.db)
             
+            # Initialize settings manager
+            from ..settings_manager import SettingsManager
+            self.settings_manager = SettingsManager()
+            
             self.docker_manager = DockerManager(database_manager=self.db)
             self.xserver_manager = XServerManager()
             self.template_manager = TemplateManager()
@@ -91,16 +95,16 @@ class GhostContainersGUI(QMainWindow):
         # Menu bar
         menubar = self.menuBar()
         
-        # Language menu
-        language_menu = menubar.addMenu(t('menu.language'))
+        # File menu
+        file_menu = menubar.addMenu(t('menu.file'))
         
-        # Get available languages from localization manager
-        from ..localization import localization_manager
-        available_languages = localization_manager.get_available_languages()
+        settings_action = file_menu.addAction(t('menu.file_settings'))
+        settings_action.triggered.connect(self._show_settings)
         
-        for lang_code, lang_name in available_languages.items():
-            action = language_menu.addAction(lang_name)
-            action.triggered.connect(lambda checked, code=lang_code: self._change_language(code))
+        file_menu.addSeparator()
+        
+        exit_action = file_menu.addAction(t('menu.file_exit'))
+        exit_action.triggered.connect(self.close)
         
         # Help menu
         help_menu = menubar.addMenu(t('menu.help'))
@@ -419,6 +423,24 @@ end tell
         layout.addWidget(close_btn)
         
         dialog.exec()
+    
+    def _show_settings(self):
+        """Show settings dialog"""
+        from .settings_dialog import SettingsDialog
+        from ..settings_manager import SettingsManager
+        
+        # Initialize settings manager if not exists
+        if not hasattr(self, 'settings_manager'):
+            self.settings_manager = SettingsManager()
+        
+        dialog = SettingsDialog(self.settings_manager, self)
+        dialog.settings_changed.connect(self._on_settings_changed)
+        dialog.exec()
+    
+    def _on_settings_changed(self):
+        """Handle settings changes"""
+        # Reload containers list with new settings
+        self.refresh_containers()
     
     def _show_about(self):
         """Show about dialog"""

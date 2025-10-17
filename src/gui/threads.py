@@ -14,12 +14,14 @@ class ContainerCreateThread(QThread):
     log_signal = pyqtSignal(str)
     progress_signal = pyqtSignal(int)
     finished_signal = pyqtSignal(bool, str)
+    open_logs_signal = pyqtSignal(str, str)  # container_id, container_name
     
     def __init__(self, docker_manager, template_manager, config):
         super().__init__()
         self.docker_manager = docker_manager
         self.template_manager = template_manager
         self.config = config
+        self.container_for_logs = None
         
     def run(self):
         """Run container creation"""
@@ -49,10 +51,13 @@ class ContainerCreateThread(QThread):
             
             # Check if we need to build/rebuild
             need_build = False
+            image_found = False
             
             # Check if image exists
             try:
+                from ..docker_api.exceptions import ImageNotFound
                 image = self.docker_manager.client.images.get(image_tag)
+                image_found = True
                 
                 # If platform specified, check if image platform matches
                 if platform_val:
@@ -76,7 +81,11 @@ class ContainerCreateThread(QThread):
                         self.log_signal.emit(t('messages.image_found').format(tag=image_tag))
                 else:
                     self.log_signal.emit(t('messages.image_found').format(tag=image_tag))
-            except:
+            except ImageNotFound:
+                self.log_signal.emit(f"Image {image_tag} not found - need to build")
+                need_build = True
+            except Exception as e:
+                self.log_signal.emit(f"Error checking image: {str(e)} - will rebuild")
                 need_build = True
             
             # Build image if needed
@@ -129,73 +138,154 @@ class ContainerCreateThread(QThread):
                 create_kwargs['platform'] = platform_val
                 self.log_signal.emit(f"Platform: {platform_val}")
             
-            # Create container
-            container_id = self.docker_manager.create_container(
-                image=image_tag,
-                name=self.config['name'],
-                environment=self.config.get('environment', {}),
-                volumes=volumes if volumes else None,
-                network_mode=self.config.get('network'),
-                hostname=self.config.get('hostname'),
-                remove=self.config.get('disposable', False),
-                template=self.config['template_id'],
-                **create_kwargs
-            )
-            
-            if container_id:
-                self.progress_signal.emit(90)
-                self.log_signal.emit(t('messages.container_created_success').format(container_id=container_id[:12]))
+            # For disposable containers with startup command, skip create and run directly
+            if self.config.get('disposable') and self.config.get('startup_command'):
+                container_id = 'disposable'  # Placeholder ID for disposable containers
+                startup_cmd = self.config['startup_command']
+                self.log_signal.emit(f"Starting disposable container with command: {startup_cmd}")
                 
-                # For disposable containers with startup command, run directly with the command
-                if self.config.get('disposable') and self.config.get('startup_command'):
-                    startup_cmd = self.config['startup_command']
-                    self.log_signal.emit(f"Starting disposable container with command: {startup_cmd}")
+                # Add to database for tracking by NAME (since container has --rm flag)
+                # This allows tracking even when container auto-removes
+                container_name = self.config['name']
+                if self.docker_manager.db:
+                    # Use container name as ID for disposable containers
+                    # This way we can track by name even after container is removed
+                    self.docker_manager.db.add_container(
+                        container_id=container_name,  # Use name as ID for tracking
+                        name=container_name,
+                        template=self.config['template_id'],
+                        disposable=True
+                    )
                     
-                    # Remove the created container and run with the command instead
+                    # Track shared folders
+                    if volumes:
+                        for host_path, mount_info in volumes.items():
+                            container_path = mount_info.get('bind', '')
+                            if container_path:
+                                self.docker_manager.db.add_shared_folder(
+                                    container_id=container_name,
+                                    host_path=host_path,
+                                    container_path=container_path
+                                )
+                
+                # Prepare environment
+                env_dict = self.config.get('environment', {}).copy()
+                
+                # Parse command for inline environment variables (e.g., "MOZ_X11_EGL=1 firefox")
+                import shlex
+                actual_command = []
+                
+                try:
+                    # Split command respecting quotes
+                    parts = shlex.split(startup_cmd)
+                    for part in parts:
+                        if '=' in part and not part.startswith('-'):
+                            # This looks like ENV=value
+                            key, value = part.split('=', 1)
+                            # Check if key is a valid environment variable name
+                            if key.replace('_', '').isalnum() and key[0].isalpha():
+                                env_dict[key] = value
+                                continue
+                        actual_command.append(part)
+                    
+                    # Reconstruct command without env vars
+                    parsed_cmd = ' '.join(actual_command) if actual_command else startup_cmd
+                except:
+                    # If parsing fails, use original command
+                    parsed_cmd = startup_cmd
+                
+                # Run container with the command
+                import platform
+                import subprocess
+                system = platform.system()
+                container_name = self.config['name']
+                
+                # Get launch mode from config (set by dialog)
+                # If not specified in config, fall back to settings
+                launch_mode = self.config.get('launch_mode')
+                
+                if not launch_mode:
+                    from ..settings_manager import SettingsManager
+                    settings = SettingsManager()
+                    settings.load()
+                    launch_mode = settings.get('launch_mode', 'api')
+                
+                self.log_signal.emit(f"Launch mode: {launch_mode}")
+                
+                if launch_mode == 'terminal' and system == "Darwin":
+                    # macOS - run in Terminal with auto-remove
+                    env_flags = ' '.join([f'-e {k}={v}' for k, v in env_dict.items()])
+                    
+                    # Add volume flags from config
+                    volume_flags = ''
+                    if volumes:
+                        for host_path, mount_info in volumes.items():
+                            container_path = mount_info['bind']
+                            mode = mount_info.get('mode', 'rw')
+                            volume_flags += f' -v {host_path}:{container_path}:{mode}'
+                    
+                    # Add platform flag if specified
+                    platform_flag = ''
+                    if platform_val:
+                        platform_flag = f'--platform {platform_val}'
+                    
+                    # Add network flag
+                    network_flag = ''
+                    if self.config.get('network'):
+                        network_flag = f'--network {self.config["network"]}'
+                    
+                    # Add hostname flag
+                    hostname_flag = ''
+                    if self.config.get('hostname'):
+                        hostname_flag = f'--hostname {self.config["hostname"]}'
+                    
+                    script = f'''
+tell application "Terminal"
+    do script "docker run --rm -it --name {container_name} {platform_flag} {network_flag} {hostname_flag} {env_flags}{volume_flags} {image_tag} sh -c '{parsed_cmd}'"
+    activate
+end tell
+'''
+                    subprocess.Popen(['osascript', '-e', script])
+                    self.log_signal.emit(t('messages.started_in_terminal'))
+                
+                elif launch_mode == 'api':
+                    # Run using Docker API with logs window
+                    self.log_signal.emit("Starting container via API...")
+                    
                     try:
-                        container = self.docker_manager.client.containers.get(container_id)
-                        container.remove(force=True)
-                    except:
-                        pass
-                    
-                    # Prepare environment
-                    env_dict = self.config.get('environment', {}).copy()
-                    
-                    # Parse command for inline environment variables (e.g., "MOZ_X11_EGL=1 firefox")
-                    import shlex
-                    cmd_parts = []
-                    actual_command = []
-                    
-                    try:
-                        # Split command respecting quotes
-                        parts = shlex.split(startup_cmd)
-                        for part in parts:
-                            if '=' in part and not part.startswith('-'):
-                                # This looks like ENV=value
-                                key, value = part.split('=', 1)
-                                # Check if key is a valid environment variable name
-                                if key.replace('_', '').isalnum() and key[0].isalpha():
-                                    env_dict[key] = value
-                                    continue
-                            actual_command.append(part)
+                        # Create and start container with API
+                        container = self.docker_manager.client.containers.run(
+                            image=image_tag,
+                            command=parsed_cmd,
+                            name=container_name,
+                            environment=env_dict,
+                            volumes=volumes,
+                            network_mode=self.config.get('network', 'bridge'),
+                            hostname=self.config.get('hostname'),
+                            auto_remove=True,  # Disposable
+                            detach=True,  # Run in background
+                            tty=True,
+                            stdin_open=True,
+                            platform=platform_val
+                        )
                         
-                        # Reconstruct command without env vars
-                        parsed_cmd = ' '.join(actual_command) if actual_command else startup_cmd
-                    except:
-                        # If parsing fails, use original command
-                        parsed_cmd = startup_cmd
-                    
-                    # Run container with the command
-                    import platform
-                    system = platform.system()
-                    container_name = self.config['name']
-                    use_terminal = self.config.get('use_terminal', False)
-                    
-                    if use_terminal and system == "Darwin":
-                        # macOS - run in Terminal with auto-remove
+                        self.log_signal.emit(f"Container started: {container.id[:12]}")
+                        
+                        # Emit signal to open logs window in main thread
+                        self.open_logs_signal.emit(container.id, container_name)
+                        
+                        self.log_signal.emit("Opening logs window...")
+                        
+                    except Exception as e:
+                        self.log_signal.emit(f"Failed to start container: {e}")
+                        raise
+                
+                elif launch_mode == 'custom':
+                    # Run with custom terminal command
+                    custom_cmd = settings.get('custom_terminal_command', '')
+                    if custom_cmd and '{command}' in custom_cmd:
+                        # Build docker run command
                         env_flags = ' '.join([f'-e {k}={v}' for k, v in env_dict.items()])
-                        
-                        # Add volume flags from config
                         volume_flags = ''
                         if volumes:
                             for host_path, mount_info in volumes.items():
@@ -203,48 +293,59 @@ class ContainerCreateThread(QThread):
                                 mode = mount_info.get('mode', 'rw')
                                 volume_flags += f' -v {host_path}:{container_path}:{mode}'
                         
-                        # Add platform flag if specified
-                        platform_flag = ''
-                        if platform_val:
-                            platform_flag = f'--platform {platform_val}'
+                        platform_flag = f'--platform {platform_val}' if platform_val else ''
+                        network_flag = f'--network {self.config.get("network")}' if self.config.get('network') else ''
+                        hostname_flag = f'--hostname {self.config.get("hostname")}' if self.config.get('hostname') else ''
                         
-                        # Add network flag
-                        network_flag = ''
-                        if self.config.get('network'):
-                            network_flag = f'--network {self.config["network"]}'
+                        docker_cmd = f"docker run --rm -it --name {container_name} {platform_flag} {network_flag} {hostname_flag} {env_flags}{volume_flags} {image_tag} sh -c '{parsed_cmd}'"
                         
-                        # Add hostname flag
-                        hostname_flag = ''
-                        if self.config.get('hostname'):
-                            hostname_flag = f'--hostname {self.config["hostname"]}'
+                        # Replace {command} with actual docker command
+                        final_cmd = custom_cmd.replace('{command}', docker_cmd)
                         
-                        script = f'''
-tell application "Terminal"
-    do script "docker run --rm -it --name {container_name} {platform_flag} {network_flag} {hostname_flag} {env_flags}{volume_flags} {image_tag} sh -c '{parsed_cmd}'"
-    activate
-end tell
-'''
-                        import subprocess
-                        subprocess.Popen(['osascript', '-e', script])
-                        self.log_signal.emit(t('messages.started_in_terminal'))
+                        # Execute custom command
+                        subprocess.Popen(final_cmd, shell=True)
+                        self.log_signal.emit("Started with custom terminal command")
                     else:
-                        # Run in background or foreground depending on use_terminal
-                        result = self.docker_manager.run_gui_app(
-                            container_name,
-                            startup_cmd
-                        )
-                        if result:
-                            self.log_signal.emit(t('command_executed'))
+                        self.log_signal.emit("Custom command not configured properly")
                 
                 else:
-                    # Normal container - just start it
-                    if self.docker_manager.start_container(self.config['name']):
-                        self.log_signal.emit(t('messages.container_started').format(name=self.config['name']))
+                    # Fallback - run in background
+                    result = self.docker_manager.run_gui_app(
+                        container_name,
+                        startup_cmd
+                    )
+                    if result:
+                        self.log_signal.emit(t('command_executed'))
                 
                 self.progress_signal.emit(100)
-                self.finished_signal.emit(True, t('messages.container_created_success').format(container_id=container_id[:12]))
+                self.finished_signal.emit(True, t('messages.container_created_success').format(container_id=container_name))
+            
             else:
-                self.finished_signal.emit(False, t('messages.failed_create_container'))
+                # Normal container - create and start it
+                container_id = self.docker_manager.create_container(
+                    image=image_tag,
+                    name=self.config['name'],
+                    environment=self.config.get('environment', {}),
+                    volumes=volumes if volumes else None,
+                    network_mode=self.config.get('network'),
+                    hostname=self.config.get('hostname'),
+                    remove=False,
+                    template=self.config['template_id'],
+                    **create_kwargs
+                )
+                
+                if container_id:
+                    self.progress_signal.emit(90)
+                    self.log_signal.emit(t('messages.container_created_success').format(container_id=container_id[:12]))
+                    
+                    # Start the container
+                    if self.docker_manager.start_container(self.config['name']):
+                        self.log_signal.emit(t('messages.container_started').format(name=self.config['name']))
+                    
+                    self.progress_signal.emit(100)
+                    self.finished_signal.emit(True, t('messages.container_created_success').format(container_id=container_id[:12]))
+                else:
+                    self.finished_signal.emit(False, t('messages.failed_create_container'))
                 
         except Exception as e:
             logger.error(f"Container creation error: {e}")

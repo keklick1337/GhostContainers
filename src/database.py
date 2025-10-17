@@ -249,6 +249,31 @@ class DatabaseManager:
         """
         return container_id in self.get_tracked_containers()
     
+    def is_tracked_by_name(self, container_name: str) -> bool:
+        """
+        Check if container is tracked by this app using its name
+        
+        Args:
+            container_name: Docker container name
+            
+        Returns:
+            True if tracked
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT id FROM containers WHERE name = ?', (container_name,))
+            result = cursor.fetchone()
+            
+            conn.close()
+            
+            return result is not None
+            
+        except sqlite3.Error as e:
+            logger.error(f"Database error checking tracked container by name: {e}")
+            return False
+    
     def update_last_started(self, container_id: str):
         """
         Update last_started timestamp for container

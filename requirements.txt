@@ -1,3 +1,2 @@
-docker
 psutil
 PyQt6

@@ -1,9 +1,10 @@
 """
 Docker Manager - module for managing Docker containers
+Using custom Docker API without external dependencies
 """
 
-import docker
-from docker.errors import DockerException, NotFound, APIError
+from .docker_api import DockerClient
+from .docker_api.exceptions import DockerException, ImageNotFound, ContainerNotFound, APIError
 import logging
 from typing import List, Dict, Optional, Any
 import os
@@ -23,11 +24,11 @@ class DockerManager:
             database_manager: Optional DatabaseManager instance for tracking containers
         """
         try:
-            self.client = docker.from_env()
-            self.docker_info = self.client.info()
+            self.client = DockerClient()
+            docker_info = self.client.info()
             self.db = database_manager
-            logger.info(f"Docker connected: {self.docker_info.get('ServerVersion', 'Unknown')}")
-        except DockerException as e:
+            logger.info(f"Docker connected: {docker_info.get('ServerVersion', 'Unknown')}")
+        except Exception as e:
             logger.error(f"Docker connection error: {e}")
             raise
     
@@ -40,12 +41,13 @@ class DockerManager:
         """
         try:
             version = self.client.version()
+            info = self.client.info()
             return {
                 'client': version.get('Version', 'Unknown'),
-                'server': self.docker_info.get('ServerVersion', 'Unknown'),
+                'server': info.get('ServerVersion', 'Unknown'),
                 'api': version.get('ApiVersion', 'Unknown')
             }
-        except DockerException as e:
+        except Exception as e:
             logger.error(f"Error getting Docker version: {e}")
             return {}
     
@@ -69,22 +71,28 @@ class DockerManager:
                 network_settings = container.attrs.get('NetworkSettings', {})
                 networks = list(network_settings.get('Networks', {}).keys())
                 
+                # Get image tags
+                image_obj = container.attrs.get('Config', {}).get('Image', '')
+                image_name = image_obj if image_obj else container.image
+                
                 container_info = {
-                    'id': container.id[:12],
+                    'id': container.short_id,
                     'full_id': container.id,
                     'name': container.name,
                     'status': container.status,
-                    'image': container.image.tags[0] if container.image.tags else container.image.id[:12],
-                    'created': container.attrs['Created'],
+                    'image': image_name,
+                    'created': container.attrs.get('Created', ''),
                     'ports': container.ports,
                     'labels': container.labels,
                     'network': networks if networks else ['bridge'],
                     'tracked': False
                 }
                 
-                # Check if tracked by this app
+                # Check if tracked by this app (by ID or by name)
                 if self.db:
-                    container_info['tracked'] = self.db.is_tracked(container.id)
+                    tracked_by_id = self.db.is_tracked(container.id)
+                    tracked_by_name = self.db.is_tracked_by_name(container.name)
+                    container_info['tracked'] = tracked_by_id or tracked_by_name
                     
                     # Filter if show_all is False
                     if not show_all and not container_info['tracked']:
@@ -93,7 +101,7 @@ class DockerManager:
                 result.append(container_info)
             
             return result
-        except DockerException as e:
+        except Exception as e:
             logger.error(f"Error getting container list: {e}")
             return []
     
@@ -129,21 +137,41 @@ class DockerManager:
             ID of created container or None
         """
         try:
-            # Check if image exists
+            # Check if image exists, pull/rebuild if not
+            image_exists = False
             try:
                 self.client.images.get(image)
-            except NotFound:
-                logger.info(f"Image {image} not found, pulling...")
-                self.client.images.pull(image)
+                image_exists = True
+                logger.info(f"Image {image} found")
+            except ImageNotFound:
+                logger.warning(f"Image {image} not found locally")
+                
+                # Try to pull from registry if it's not a custom image
+                if not image.startswith('ghostcontainers-'):
+                    try:
+                        logger.info(f"Attempting to pull {image} from registry...")
+                        repo = image.split(':')[0]
+                        tag_name = image.split(':')[1] if ':' in image else 'latest'
+                        self.client.images.pull(repo, tag=tag_name)
+                        image_exists = True
+                        logger.info(f"Successfully pulled {image}")
+                    except Exception as pull_error:
+                        logger.error(f"Failed to pull {image}: {pull_error}")
+                        # For ghostcontainers images, we'll need to rebuild them
+                        # For now, just log and continue - the create will fail with a clear error
+                
+                # If still not found, the create will fail with appropriate error
+                if not image_exists:
+                    logger.error(f"Image {image} not available. Need to build or pull it first.")
             
             # Create container
             container = self.client.containers.create(
                 image=image,
                 name=name,
-                environment=environment or {},
-                volumes=volumes or {},
+                environment=environment,
+                volumes=volumes,
                 network_mode=network_mode,
-                hostname=hostname or name,
+                hostname=hostname,
                 detach=detach,
                 stdin_open=True,
                 tty=True,
@@ -151,7 +179,7 @@ class DockerManager:
                 **kwargs
             )
             
-            logger.info(f"Container {name} created: {container.id[:12]}")
+            logger.info(f"Container {name} created: {container.short_id}")
             
             # Add to database if available
             if self.db:
@@ -199,7 +227,7 @@ class DockerManager:
             
             logger.info(f"Container {name} started")
             return True
-        except NotFound:
+        except ContainerNotFound:
             logger.error(f"Container {name} not found")
             return False
         except APIError as e:
@@ -222,11 +250,34 @@ class DockerManager:
             container.stop(timeout=timeout)
             logger.info(f"Container {name} stopped")
             return True
-        except NotFound:
+        except ContainerNotFound:
             logger.error(f"Container {name} not found")
             return False
         except APIError as e:
             logger.error(f"Error stopping container {name}: {e}")
+            return False
+    
+    def restart_container(self, name: str, timeout: int = 10) -> bool:
+        """
+        Restart container
+        
+        Args:
+            name: Container name
+            timeout: Timeout for restart operation
+            
+        Returns:
+            True if successful
+        """
+        try:
+            container = self.client.containers.get(name)
+            container.restart(timeout=timeout)
+            logger.info(f"Container {name} restarted")
+            return True
+        except ContainerNotFound:
+            logger.error(f"Container {name} not found")
+            return False
+        except APIError as e:
+            logger.error(f"Error restarting container {name}: {e}")
             return False
     
     def remove_container(self, name: str, force: bool = False) -> bool:
@@ -251,7 +302,7 @@ class DockerManager:
             
             logger.info(f"Container {name} removed")
             return True
-        except NotFound:
+        except ContainerNotFound:
             logger.error(f"Container {name} not found")
             return False
         except APIError as e:
@@ -281,74 +332,27 @@ class DockerManager:
         """
         try:
             container = self.client.containers.get(name)
+            result = container.exec_run(
+                cmd=command,
+                stdout=True,
+                stderr=True,
+                user=user or '',
+                workdir=workdir or '',
+                environment=environment
+            )
             
-            exec_config = {
-                'cmd': command,
-                'stdout': True,
-                'stderr': True,
-                'stdin': False,
-                'tty': False
-            }
+            # Parse result - our API returns raw response
+            # Need to read and decode
+            if result:
+                return str(result)
+            return None
             
-            if user:
-                exec_config['user'] = user
-            if workdir:
-                exec_config['workdir'] = workdir
-            if environment:
-                exec_config['environment'] = environment
-            
-            result = container.exec_run(**exec_config)
-            
-            return result.output.decode('utf-8')
-            
-        except NotFound:
+        except ContainerNotFound:
             logger.error(f"Container {name} not found")
             return None
         except APIError as e:
             logger.error(f"Command execution error in {name}: {e}")
             return None
-    
-    def exec_interactive(
-        self,
-        name: str,
-        command: str = "/bin/bash",
-        user: Optional[str] = None,
-        environment: Optional[Dict[str, str]] = None
-    ) -> bool:
-        """
-        Open interactive session in container
-        
-        Args:
-            name: Container name
-            command: Command (default /bin/bash)
-            user: User
-            environment: Environment variables
-            
-        Returns:
-            True if successful
-        """
-        try:
-            container = self.client.containers.get(name)
-            
-            # Build docker exec command for interactive mode
-            user_flag = f"-u {user}" if user else ""
-            env_flags = " ".join([f"-e {k}={v}" for k, v in (environment or {}).items()])
-            
-            exec_cmd = f"docker exec -it {env_flags} {user_flag} {name} {command}"
-            
-            logger.info(f"Starting interactive session: {exec_cmd}")
-            
-            # Using os.system for interactive mode
-            os.system(exec_cmd)
-            
-            return True
-            
-        except NotFound:
-            logger.error(f"Container {name} not found")
-            return False
-        except Exception as e:
-            logger.error(f"Error opening interactive session in {name}: {e}")
-            return False
     
     def run_gui_app(
         self,
@@ -382,36 +386,26 @@ class DockerManager:
             }
             
             # Fix Firefox popup black screen issue
-            # Add environment variables to disable hardware acceleration
             if 'firefox' in app.lower() or 'mozilla' in app.lower():
                 env_vars['MOZ_X11_EGL'] = '0'
                 env_vars['MOZ_DISABLE_CONTENT_SANDBOX'] = '1'
                 env_vars['LIBGL_ALWAYS_SOFTWARE'] = '1'
                 env_vars['MOZ_ACCELERATED'] = '0'
             
-            exec_config = {
-                'cmd': app,
-                'stdout': True,
-                'stderr': True,
-                'stdin': False,
-                'tty': False,
-                'detach': background,
-                'environment': env_vars
-            }
-            
-            if user:
-                exec_config['user'] = user
-            
             logger.info(f"Running GUI app '{app}' in container {name} with DISPLAY={display}")
-            result = container.exec_run(**exec_config)
             
-            if not background and result.exit_code != 0:
-                logger.error(f"GUI app failed: {result.output.decode('utf-8')}")
-                return False
+            result = container.exec_run(
+                cmd=app,
+                stdout=True,
+                stderr=True,
+                user=user or '',
+                detach=background,
+                environment=env_vars
+            )
             
             return True
             
-        except NotFound:
+        except ContainerNotFound:
             logger.error(f"Container {name} not found")
             return False
         except Exception as e:
@@ -421,14 +415,6 @@ class DockerManager:
     def execute_command(self, name: str, command: str, user: Optional[str] = None) -> Optional[str]:
         """
         Alias for exec_command for compatibility
-        
-        Args:
-            name: Container name
-            command: Command to execute
-            user: User to run as
-            
-        Returns:
-            Command output or None
         """
         return self.exec_command(name, command, user=user)
     
@@ -445,7 +431,7 @@ class DockerManager:
         try:
             container = self.client.containers.get(name)
             return container.status
-        except NotFound:
+        except ContainerNotFound:
             return None
         except APIError as e:
             logger.error(f"Error getting status {name}: {e}")
@@ -453,42 +439,28 @@ class DockerManager:
     
     def get_container_logs(self, name: str, tail: int = 100) -> Optional[str]:
         """
-        Get container logs
-        
-        Args:
-            name: Container name
-            tail: Number of last lines
-            
-        Returns:
-            Logs or None
+        Get container logs (not implemented in custom API yet)
+        Using docker CLI for now
         """
         try:
-            container = self.client.containers.get(name)
-            logs = container.logs(tail=tail).decode('utf-8')
-            return logs
-        except NotFound:
-            logger.error(f"Container {name} not found")
+            import subprocess
+            result = subprocess.run(
+                ['docker', 'logs', '--tail', str(tail), name],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                return result.stdout + result.stderr
             return None
-        except APIError as e:
+        except Exception as e:
             logger.error(f"Error getting logs {name}: {e}")
             return None
     
     def copy_to_container(self, name: str, src_path: str, dst_path: str) -> bool:
         """
-        Copy file to container
-        
-        Args:
-            name: Container name
-            src_path: File path on host
-            dst_path: Path in container
-            
-        Returns:
-            True if successful
+        Copy file to container (using docker CLI)
         """
         try:
-            container = self.client.containers.get(name)
-            
-            # Using docker cp command
             cmd = f"docker cp {src_path} {name}:{dst_path}"
             result = os.system(cmd)
             
@@ -499,29 +471,15 @@ class DockerManager:
                 logger.error(f"Error copying file to container")
                 return False
                 
-        except NotFound:
-            logger.error(f"Container {name} not found")
-            return False
         except Exception as e:
             logger.error(f"Copy error: {e}")
             return False
     
     def copy_from_container(self, name: str, src_path: str, dst_path: str) -> bool:
         """
-        Copy file from container
-        
-        Args:
-            name: Container name
-            src_path: Path in container
-            dst_path: Path on host
-            
-        Returns:
-            True if successful
+        Copy file from container (using docker CLI)
         """
         try:
-            container = self.client.containers.get(name)
-            
-            # Using docker cp command
             cmd = f"docker cp {name}:{src_path} {dst_path}"
             result = os.system(cmd)
             
@@ -529,12 +487,9 @@ class DockerManager:
                 logger.info(f"File {name}:{src_path} copied to {dst_path}")
                 return True
             else:
-                logger.error(f"Copy error file from container")
+                logger.error(f"Copy error from container")
                 return False
                 
-        except NotFound:
-            logger.error(f"Container {name} not found")
-            return False
         except Exception as e:
             logger.error(f"Copy error: {e}")
             return False
@@ -555,28 +510,23 @@ class DockerManager:
         try:
             logger.info(f"Building image {tag} from {path}...")
             
-            # Remove callback from kwargs if present (not a docker API parameter)
-            kwargs.pop('callback', None)
+            # Extract build args
+            buildargs = kwargs.get('buildargs')
+            platform = kwargs.get('platform')
             
-            image, build_logs = self.client.images.build(
+            # Build image using our API
+            image = self.client.images.build(
                 path=path,
                 tag=tag,
-                rm=True,
-                **kwargs
+                buildargs=buildargs,
+                platform=platform,
+                callback=callback
             )
-            
-            for log in build_logs:
-                if 'stream' in log:
-                    message = log['stream'].strip()
-                    if message:
-                        logger.info(message)
-                        if callback:
-                            callback(message)
             
             logger.info(f"Image {tag} built successfully")
             return True
             
-        except APIError as e:
+        except Exception as e:
             logger.error(f"Image build error {tag}: {e}")
             if callback:
                 callback(f"ERROR: {str(e)}")

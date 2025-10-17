@@ -109,18 +109,30 @@ class ImageManagerPlugin(TabPlugin):
             for image in all_images:
                 # Get image name
                 tags = image.tags
+                # Ensure tags is a list
+                if not isinstance(tags, list):
+                    tags = []
                 if not tags:
                     continue
                 
                 for tag in tags:
+                    # Ensure tag is a string
+                    if not isinstance(tag, str):
+                        continue
+                    
                     # Filter ghostcontainers images
                     if 'ghostcontainers-' in tag or show_all:
+                        # Get size safely
+                        size = image.attrs.get('Size', 0)
+                        if not isinstance(size, (int, float)):
+                            size = 0
+                        
                         ghostcontainers_images.append({
                             'tag': tag,
                             'id': image.short_id.replace('sha256:', ''),
-                            'size': image.attrs.get('Size', 0),
-                            'created': image.attrs.get('Created', ''),
-                            'platform': image.attrs.get('Architecture', 'unknown')
+                            'size': int(size),
+                            'created': str(image.attrs.get('Created', '')),
+                            'platform': str(image.attrs.get('Architecture', 'unknown'))
                         })
             
             # Populate table
