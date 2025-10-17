@@ -15,60 +15,82 @@ logger = logging.getLogger(__name__)
 class SettingsManager:
     """Manager for application settings"""
     
-    DEFAULT_SETTINGS = {
-        'language': 'en',  # Language: en, ru
-        'launch_mode': 'api',  # Launch mode: terminal, api, custom (default: api)
-        'custom_terminal_command': '',  # Custom command for terminal launch
-        'theme': 'system',  # Theme: system, light, dark
-        'auto_refresh_interval': 5,  # Auto-refresh interval in seconds
-        'show_all_containers_default': False,  # Default state for "Show all containers"
-        'log_level': 'INFO',  # Logging level
-        'docker_socket_path': '',  # Custom Docker socket path (empty = auto-detect)
-        'show_success_messages': True,  # Show success message boxes
-        'show_logs_window': True,  # Show logs window when using API mode
-    }
+    # Template file in repository
+    TEMPLATE_FILE = 'config/settings.json'
     
-    def __init__(self, settings_file: str = 'config/settings.json'):
-        """
-        Initialize settings manager
+    # User settings file location
+    @staticmethod
+    def get_user_settings_path() -> str:
+        """Get path to user settings file"""
+        if os.name == 'nt':  # Windows
+            base_dir = os.environ.get('APPDATA', os.path.expanduser('~'))
+            data_dir = os.path.join(base_dir, 'ghost-containers')
+        else:  # macOS, Linux
+            data_dir = os.path.join(
+                os.environ.get('XDG_DATA_HOME', os.path.expanduser('~/.local/share')),
+                'ghost-containers'
+            )
         
-        Args:
-            settings_file: Path to settings JSON file
-        """
-        self.settings_file = settings_file
+        os.makedirs(data_dir, exist_ok=True)
+        return os.path.join(data_dir, 'settings.json')
+    
+    def __init__(self):
+        """Initialize settings manager"""
+        self.template_file = self.TEMPLATE_FILE
+        self.settings_file = self.get_user_settings_path()
         self.settings: Dict[str, Any] = {}
-        
-        # Ensure config directory exists
-        config_dir = os.path.dirname(settings_file)
-        if config_dir and not os.path.exists(config_dir):
-            os.makedirs(config_dir, exist_ok=True)
         
         # Load settings
         self.load()
     
-    def load(self):
-        """Load settings from file"""
+    def _load_template_settings(self) -> Dict[str, Any]:
+        """Load default settings from template file"""
         try:
+            if os.path.exists(self.template_file):
+                with open(self.template_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not load template settings: {e}")
+        
+        # Fallback defaults if template file missing
+        return {
+            'language': 'en',
+            'launch_mode': 'api',
+            'custom_terminal_command': '',
+            'theme': 'system',
+            'auto_refresh_interval': 5,
+            'show_all_containers_default': False,
+            'log_level': 'INFO',
+            'docker_socket_path': '',
+            'show_success_messages': True,
+            'show_logs_window': True,
+        }
+    
+    def load(self):
+        """Load settings from user file"""
+        try:
+            default_settings = self._load_template_settings()
+            
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, 'r', encoding='utf-8') as f:
                     loaded_settings = json.load(f)
                 
-                # Merge with defaults
-                self.settings = self.DEFAULT_SETTINGS.copy()
+                # Merge with defaults (user settings override defaults)
+                self.settings = default_settings.copy()
                 self.settings.update(loaded_settings)
                 
                 logger.info(f"Settings loaded from {self.settings_file}")
             else:
-                # Use defaults
-                self.settings = self.DEFAULT_SETTINGS.copy()
-                logger.info("Using default settings")
+                # Use defaults from template
+                self.settings = default_settings.copy()
+                logger.info(f"Using default settings from {self.template_file}")
                 
-                # Save defaults to file
+                # Save defaults to user file
                 self.save()
         
         except Exception as e:
             logger.error(f"Error loading settings: {e}")
-            self.settings = self.DEFAULT_SETTINGS.copy()
+            self.settings = self._load_template_settings()
     
     def save(self):
         """Save settings to file"""
@@ -125,15 +147,16 @@ class SettingsManager:
     
     def reset_to_defaults(self, save: bool = True):
         """
-        Reset all settings to defaults
+        Reset all settings to defaults from template
         
         Args:
             save: Save to file immediately
         """
-        self.settings = self.DEFAULT_SETTINGS.copy()
+        self.settings = self._load_template_settings()
         
         if save:
             self.save()
+            logger.info(f"Settings reset to defaults from {self.template_file}")
     
     def get_all(self) -> Dict[str, Any]:
         """Get all settings"""

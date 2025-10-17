@@ -248,8 +248,13 @@ class ContainerLogsReaderThread(QThread):
                     if line_str:
                         self.log_line.emit(line_str)
                 
+                except TimeoutError:
+                    # Timeout is normal when following logs with no output
+                    continue
                 except Exception as e:
-                    logger.error(f"Error reading log line: {e}")
+                    # Only log real errors, not timeouts
+                    if 'timed out' not in str(e).lower():
+                        logger.error(f"Error reading log line: {e}")
                     break
             
             self.finished_signal.emit(True, "Logs stream ended")

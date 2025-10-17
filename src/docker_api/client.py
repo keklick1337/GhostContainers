@@ -6,6 +6,7 @@ from typing import Optional
 from .http_client import DockerHTTPClient
 from .images import ImageCollection
 from .containers import ContainerCollection
+from .networks import NetworkCollection
 
 
 class DockerClient:
@@ -25,6 +26,7 @@ class DockerClient:
         self.http = DockerHTTPClient(base_url=base_url, timeout=timeout)
         self.images = ImageCollection(self)
         self.containers = ContainerCollection(self)
+        self.networks = NetworkCollection(self)
     
     def version(self) -> dict:
         """Get Docker version info"""

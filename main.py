@@ -32,12 +32,13 @@ def main():
     
     # Determine mode
     if args.cli or len(remaining) > 0:
+        raise Exception("CLI mode is currently not implemented.")
         # CLI mode
-        from src.cli import run_cli
+        #from src.cli import run_cli
         
         # Restore sys.argv for CLI parser
-        sys.argv = [sys.argv[0]] + remaining
-        run_cli()
+        #sys.argv = [sys.argv[0]] + remaining
+        #run_cli()
     else:
         # GUI mode (default) - Use modular PyQt6 interface
         from src.gui import run_gui_qt

@@ -23,7 +23,7 @@ class DatabaseManager:
         Initialize database manager
         
         Args:
-            db_path: Path to SQLite database file. Defaults to ~/.local/share/docker-software-manager/containers.db
+            db_path: Path to SQLite database file. Defaults to ~/.local/share/ghost-containers/containers.db
         """
         if db_path is None:
             # Use XDG Base Directory specification
@@ -31,7 +31,7 @@ class DatabaseManager:
             if not data_home:
                 data_home = os.path.expanduser('~/.local/share')
             
-            app_dir = os.path.join(data_home, 'docker-software-manager')
+            app_dir = os.path.join(data_home, 'ghost-containers')
             os.makedirs(app_dir, exist_ok=True)
             
             db_path = os.path.join(app_dir, 'containers.db')

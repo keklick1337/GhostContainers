@@ -6,7 +6,7 @@ Uses common LogViewerWidget for display
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
-    QLabel, QMessageBox
+    QLabel, QMessageBox, QCheckBox
 )
 
 import sys
@@ -31,6 +31,7 @@ class ContainerLogsPlugin(TabPlugin):
         self.tab_widget = None
         self.log_container_combo = None
         self.log_viewer = None
+        self.show_all_check = None
         
         # Register for container updates hook
         self.register_hook('HOOK_CONTAINERS_UPDATED', self.update_containers)
@@ -48,6 +49,7 @@ class ContainerLogsPlugin(TabPlugin):
         selector_layout.addWidget(QLabel(t('labels.container') + ":"))
         
         self.log_container_combo = QComboBox()
+        self.log_container_combo.setMinimumWidth(200)
         selector_layout.addWidget(self.log_container_combo)
         
         show_btn = QPushButton(t('labels.show_logs'))
@@ -55,6 +57,17 @@ class ContainerLogsPlugin(TabPlugin):
         selector_layout.addWidget(show_btn)
         
         selector_layout.addStretch()
+        
+        # Show all containers checkbox
+        self.show_all_check = QCheckBox(t('labels.show_all_containers'))
+        self.show_all_check.stateChanged.connect(self._refresh_container_list)
+        selector_layout.addWidget(self.show_all_check)
+        
+        # Refresh button
+        refresh_btn = QPushButton(t('buttons.refresh'))
+        refresh_btn.clicked.connect(self._refresh_container_list)
+        selector_layout.addWidget(refresh_btn)
+        
         layout.addLayout(selector_layout)
         
         # Use common log viewer widget
@@ -64,14 +77,55 @@ class ContainerLogsPlugin(TabPlugin):
         self.tab_widget = widget
         return widget
     
+    def initialize(self, app_context):
+        """Initialize plugin with app context"""
+        result = super().initialize(app_context)
+        
+        # Load container list after initialization
+        if self.docker_manager:
+            self._refresh_container_list()
+        
+        return result
+    
+    def _refresh_container_list(self):
+        """Refresh container list from Docker"""
+        if not self.docker_manager:
+            return
+        
+        # Get containers based on show_all checkbox
+        show_all = self.show_all_check.isChecked() if self.show_all_check else False
+        containers = self.docker_manager.list_containers(all_containers=True, show_all=show_all)
+        
+        # Update combo box
+        if self.log_container_combo:
+            current_selection = self.log_container_combo.currentText()
+            self.log_container_combo.clear()
+            
+            # Add all container names
+            for container in containers:
+                self.log_container_combo.addItem(container['name'])
+            
+            # Restore previous selection if it still exists
+            if current_selection:
+                index = self.log_container_combo.findText(current_selection)
+                if index >= 0:
+                    self.log_container_combo.setCurrentIndex(index)
+    
     def update_containers(self, containers):
-        """Update container list"""
+        """Update container list (called by hook)"""
         if not self.log_container_combo:
             return
-            
+        
+        current_selection = self.log_container_combo.currentText()
         self.log_container_combo.clear()
         all_names = [c['name'] for c in containers]
         self.log_container_combo.addItems(all_names)
+        
+        # Restore selection
+        if current_selection:
+            index = self.log_container_combo.findText(current_selection)
+            if index >= 0:
+                self.log_container_combo.setCurrentIndex(index)
     
     def refresh(self):
         """Refresh logs"""
