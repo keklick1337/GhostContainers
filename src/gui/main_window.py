@@ -58,6 +58,9 @@ class GhostContainersGUI(QMainWindow):
             
             # Operation thread tracking
             self.operation_thread = None
+            
+            # Active logs windows (keep references to prevent garbage collection)
+            self._active_logs_windows = []
             self.status_timer = None
             self.status_dots = 0
             

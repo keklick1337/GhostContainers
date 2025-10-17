@@ -84,12 +84,13 @@ class AppSelectorDialog(QDialog):
         
         # Get container info to find template
         try:
-            container = self.docker_manager.get_container(self.container_name)
-            if not container:
+            # Get container from Docker API
+            container_obj = self.docker_manager.client.containers.get(self.container_name)
+            if not container_obj:
                 return
             
             # Try to get template from container labels
-            labels = container.get('labels', {})
+            labels = container_obj.labels
             template_id = labels.get('template')
             
             # Load template apps

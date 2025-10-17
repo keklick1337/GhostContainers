@@ -1,14 +1,13 @@
 """
 Container Logs Plugin
 Provides log viewing interface for containers
+Uses common LogViewerWidget for display
 """
 
-import re
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
-    QLabel, QCheckBox, QTextEdit, QMessageBox
+    QLabel, QMessageBox
 )
-from PyQt6.QtGui import QFont, QColor, QTextCursor
 
 import sys
 import os
@@ -16,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from src.plugin_api import TabPlugin
 from src.localization import t
+from src.gui.log_viewer_widget import LogViewerWidget
 
 
 class ContainerLogsPlugin(TabPlugin):
@@ -30,8 +30,7 @@ class ContainerLogsPlugin(TabPlugin):
         
         self.tab_widget = None
         self.log_container_combo = None
-        self.logs_text = None
-        self.auto_scroll_check = None
+        self.log_viewer = None
         
         # Register for container updates hook
         self.register_hook('HOOK_CONTAINERS_UPDATED', self.update_containers)
@@ -55,23 +54,12 @@ class ContainerLogsPlugin(TabPlugin):
         show_btn.clicked.connect(self.show_logs)
         selector_layout.addWidget(show_btn)
         
-        clear_btn = QPushButton(t('buttons.clear'))
-        clear_btn.clicked.connect(self.clear_logs)
-        selector_layout.addWidget(clear_btn)
-        
-        self.auto_scroll_check = QCheckBox(t('labels.auto_scroll'))
-        self.auto_scroll_check.setChecked(True)
-        selector_layout.addWidget(self.auto_scroll_check)
-        
         selector_layout.addStretch()
         layout.addLayout(selector_layout)
         
-        # Logs text
-        self.logs_text = QTextEdit()
-        self.logs_text.setReadOnly(True)
-        self.logs_text.setFont(QFont("Monaco", 10))
-        self.logs_text.setStyleSheet("background-color: #1e1e1e; color: #d4d4d4;")
-        layout.addWidget(self.logs_text)
+        # Use common log viewer widget
+        self.log_viewer = LogViewerWidget(parent=widget, show_controls=True)
+        layout.addWidget(self.log_viewer)
         
         self.tab_widget = widget
         return widget
@@ -91,7 +79,7 @@ class ContainerLogsPlugin(TabPlugin):
     
     def show_logs(self):
         """Show container logs with color coding"""
-        if not self.log_container_combo:
+        if not self.log_container_combo or not self.log_viewer:
             return
             
         container = self.log_container_combo.currentText()
@@ -102,41 +90,12 @@ class ContainerLogsPlugin(TabPlugin):
         
         logs = self.docker_manager.get_container_logs(container, tail=500)
         if logs:
-            self.logs_text.clear()
+            self.log_viewer.clear()
             
-            cursor = self.logs_text.textCursor()
-            
+            # Append each line with ANSI color support
             for line in logs.split('\n'):
-                if not line:
-                    continue
-                
-                # Determine color based on log level
-                if re.search(r'\b(ERROR|FATAL|CRITICAL)\b', line, re.IGNORECASE):
-                    color = '#ff5555'
-                elif re.search(r'\bWARN(ING)?\b', line, re.IGNORECASE):
-                    color = '#ffb86c'
-                elif re.search(r'\bINFO\b', line, re.IGNORECASE):
-                    color = '#50fa7b'
-                elif re.search(r'\bDEBUG\b', line, re.IGNORECASE):
-                    color = '#8be9fd'
-                else:
-                    color = '#d4d4d4'
-                
-                cursor.movePosition(QTextCursor.MoveOperation.End)
-                fmt = cursor.charFormat()
-                fmt.setForeground(QColor(color))
-                cursor.setCharFormat(fmt)
-                cursor.insertText(line + '\n')
-            
-            if self.auto_scroll_check.isChecked():
-                scrollbar = self.logs_text.verticalScrollBar()
-                if scrollbar:
-                    scrollbar.setValue(scrollbar.maximum())
+                if line:
+                    self.log_viewer.append_line(line)
         else:
             QMessageBox.critical(self.tab_widget, t('dialogs.error_title'), 
                                t('messages.failed_get_logs').format(container=container))
-    
-    def clear_logs(self):
-        """Clear logs display"""
-        if self.logs_text:
-            self.logs_text.clear()

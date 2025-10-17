@@ -613,14 +613,24 @@ class CreateContainerDialog(QDialog):
         """Open logs window for the created container"""
         # Check if user wants to see logs window (from dialog checkbox)
         if self.show_logs_check.isChecked():
-            # Create logs window WITHOUT parent so it stays open after dialog closes
-            self.logs_window = ContainerLogsWindow(
+            # Create logs window with main window as parent to keep it alive
+            # Get main window (parent of this dialog)
+            main_window = self.parent()
+            
+            logs_window = ContainerLogsWindow(
                 self.docker_manager,
                 container_id,
                 container_name,
-                None  # No parent - window will be independent
+                main_window  # Use main window as parent
             )
-            self.logs_window.show()
+            
+            # Store reference in main window to prevent garbage collection
+            if hasattr(main_window, '_active_logs_windows'):
+                main_window._active_logs_windows.append(logs_window)
+            else:
+                main_window._active_logs_windows = [logs_window]
+            
+            logs_window.show()
     
     def _creation_finished(self, success, message):
         """Handle creation finished"""
