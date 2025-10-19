@@ -157,6 +157,15 @@ class ContainerCreateThread(QThread):
                         disposable=True
                     )
                     
+                    # Copy template apps to database
+                    if 'template_apps' in self.config:
+                        for app in self.config['template_apps']:
+                            self.docker_manager.db.add_container_app(
+                                container_name=container_name,
+                                app_name=app.get('name', ''),
+                                app_command=app.get('command', '')
+                            )
+                    
                     # Track shared folders
                     if volumes:
                         for host_path, mount_info in volumes.items():
@@ -309,10 +318,12 @@ end tell
                         self.log_signal.emit("Custom command not configured properly")
                 
                 else:
-                    # Fallback - run in background
+                    # Fallback - run in background via API
+                    launch_mode = self.config.get('launch_mode', 'api')
                     result = self.docker_manager.run_gui_app(
                         container_name,
-                        startup_cmd
+                        startup_cmd,
+                        launch_mode=launch_mode
                     )
                     if result:
                         self.log_signal.emit(t('command_executed'))
@@ -322,6 +333,11 @@ end tell
             
             else:
                 # Normal container - create and start it
+                
+                # Pass template apps if available
+                if 'template_apps' in self.config:
+                    create_kwargs['template_apps'] = self.config['template_apps']
+                
                 container_id = self.docker_manager.create_container(
                     image=image_tag,
                     name=self.config['name'],
@@ -341,6 +357,22 @@ end tell
                     # Start the container
                     if self.docker_manager.start_container(self.config['name']):
                         self.log_signal.emit(t('messages.container_started').format(name=self.config['name']))
+                        
+                        # Run startup app if specified (like in disposable mode)
+                        startup_cmd = self.config.get('startup_command')
+                        if startup_cmd:
+                            self.log_signal.emit(f"Starting application: {startup_cmd}")
+                            # Run GUI app in the container with launch mode from config
+                            launch_mode = self.config.get('launch_mode', 'api')
+                            result = self.docker_manager.run_gui_app(
+                                self.config['name'],
+                                startup_cmd,
+                                launch_mode=launch_mode
+                            )
+                            if result:
+                                self.log_signal.emit("Application started successfully")
+                            else:
+                                self.log_signal.emit("Failed to start application")
                     
                     self.progress_signal.emit(100)
                     self.finished_signal.emit(True, t('messages.container_created_success').format(container_id=container_id[:12]))

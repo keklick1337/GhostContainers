@@ -380,6 +380,7 @@ end tell
             
             app_command = selected_app['command']
             app_name = selected_app['name']
+            launch_mode = selected_app.get('launch_mode', 'api')  # Get launch mode from dialog
             
             # Check if container is running
             containers = self.docker_manager.list_containers(all_containers=True)
@@ -396,8 +397,32 @@ end tell
                                        t('messages.failed_start_container').format(name=name))
                     return
             
-            # Run the app
-            if self.docker_manager.run_gui_app(name, app_command):
+            # Run the app with selected launch mode
+            result = self.docker_manager.run_gui_app(name, app_command, launch_mode=launch_mode)
+            
+            # Check if result is dict (API mode with container info) or bool
+            if isinstance(result, dict):
+                if result.get('success'):
+                    container_id = result.get('container_id')
+                    container_name = result.get('container_name')
+                    
+                    # Open logs window for the GUI app container
+                    from .logs_window import ContainerLogsWindow
+                    logs_window = ContainerLogsWindow(
+                        self.docker_manager,
+                        container_id,
+                        container_name,
+                        parent=self
+                    )
+                    logs_window.show()
+                    
+                    self.statusBar().showMessage(t('messages.started_gui_app').format(app=app_name, name=name))
+                else:
+                    error_msg = result.get('error', 'Unknown error')
+                    QMessageBox.critical(self, t('dialogs.error_title'), 
+                                       f"{t('messages.failed_run_gui_app').format(app=app_name)}\n{error_msg}")
+            elif result:
+                # Terminal or custom mode - just show success message
                 self.statusBar().showMessage(t('messages.started_gui_app').format(app=app_name, name=name))
             else:
                 QMessageBox.critical(self, t('dialogs.error_title'), 

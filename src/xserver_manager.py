@@ -30,12 +30,14 @@ class XServerManager:
         Returns:
             'wayland', 'x11', 'macos', 'windows' or 'unknown'
         """
+        from .x11_helper import get_display
+        
         if self.os_type == "Linux":
             # Check Wayland
             if os.environ.get('WAYLAND_DISPLAY'):
                 return 'wayland'
             # Check X11
-            elif os.environ.get('DISPLAY'):
+            elif get_display():
                 return 'x11'
             else:
                 return 'unknown'
@@ -53,9 +55,11 @@ class XServerManager:
         Returns:
             DISPLAY variable or None
         """
+        from .x11_helper import get_display
+        
         if self.os_type == "Linux":
             # Linux (X11 or Wayland)
-            display = os.environ.get('DISPLAY', ':0')
+            display = get_display()
             self.display = display
             return display
             

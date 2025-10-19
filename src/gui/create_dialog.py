@@ -424,29 +424,12 @@ class CreateContainerDialog(QDialog):
     
     def _setup_xhost_permissions(self):
         """Setup xhost permissions for X11 access"""
-        system = platform_module.system()
+        from ..x11_helper import setup_xhost_permissions
         
-        if system in ["Darwin", "Linux"]:
-            try:
-                # Add localhost permissions
-                subprocess.run(['xhost', '+localhost'], 
-                             capture_output=True, timeout=2)
-                subprocess.run(['xhost', '+127.0.0.1'], 
-                             capture_output=True, timeout=2)
-                
-                # Add hostname permissions
-                hostname_result = subprocess.run(['hostname'], 
-                                               capture_output=True, 
-                                               text=True, 
-                                               timeout=2)
-                if hostname_result.returncode == 0:
-                    hostname = hostname_result.stdout.strip()
-                    subprocess.run(['xhost', f'+{hostname}'], 
-                                 capture_output=True, timeout=2)
-                
-                self.log_text.append("✓ X11 permissions configured")
-            except Exception as e:
-                self.log_text.append(f"⚠ Could not configure xhost: {e}")
+        if setup_xhost_permissions():
+            self.log_text.append("✓ X11 permissions configured")
+        else:
+            self.log_text.append("⚠ Could not configure xhost permissions")
     
     def _create_container(self):
         """Start container creation"""
@@ -539,8 +522,9 @@ class CreateContainerDialog(QDialog):
         
         # Add DISPLAY if GUI
         if config['gui']:
+            from ..x11_helper import get_display
             import platform
-            display = os.environ.get('DISPLAY', ':0')
+            display = get_display()
             
             # On macOS with XQuartz, use host.docker.internal
             if platform.system() == "Darwin" and display:
@@ -560,6 +544,14 @@ class CreateContainerDialog(QDialog):
         selected_launch_mode = self.launch_mode_combo.currentData()
         config['launch_mode'] = selected_launch_mode
         config['show_logs_window'] = self.show_logs_check.isChecked()
+        
+        # Get template apps to copy to database
+        template_id = self.template_combo.currentData()
+        template = self.template_manager.get_template(template_id)
+        if template and 'config' in template:
+            template_config = template['config']
+            if 'apps' in template_config:
+                config['template_apps'] = template_config['apps']
         
         # Handle startup app selection
         app_selection = self.startup_app_combo.currentData()

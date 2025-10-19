@@ -4,7 +4,7 @@ Network Manager - network settings management Docker
 
 import logging
 from typing import List, Dict, Optional
-from docker.errors import APIError, NotFound
+from .docker_api.exceptions import APIError, NetworkNotFound
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ class NetworkManager:
             network.remove()
             logger.info(f"Network {name} removed")
             return True
-        except NotFound:
+        except NetworkNotFound:
             logger.error(f"Network {name} not found")
             return False
         except APIError as e:
@@ -117,7 +117,7 @@ class NetworkManager:
             network.connect(container_name)
             logger.info(f"Container {container_name} connected to network {network_name}")
             return True
-        except NotFound as e:
+        except NetworkNotFound as e:
             logger.error(f"Network or container not found: {e}")
             return False
         except APIError as e:
@@ -140,7 +140,7 @@ class NetworkManager:
             network.disconnect(container_name)
             logger.info(f"Container {container_name} disconnected from network {network_name}")
             return True
-        except NotFound as e:
+        except NetworkNotFound as e:
             logger.error(f"Network or container not found: {e}")
             return False
         except APIError as e:
@@ -206,7 +206,7 @@ class NetworkManager:
                 'ipam': network.attrs.get('IPAM'),
                 'containers': network.attrs.get('Containers', {})
             }
-        except NotFound:
+        except NetworkNotFound:
             logger.error(f"Network {name} not found")
             return None
         except Exception as e:

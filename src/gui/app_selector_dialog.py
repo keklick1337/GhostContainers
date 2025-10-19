@@ -5,7 +5,7 @@ Select and manage GUI applications for containers
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QMessageBox, QInputDialog, QHeaderView, QLabel
+    QPushButton, QMessageBox, QInputDialog, QHeaderView, QLabel, QComboBox
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
@@ -30,6 +30,30 @@ class AppSelectorDialog(QDialog):
         # Info label
         info_label = QLabel("Select an application to run:")
         layout.addWidget(info_label)
+        
+        # Launch mode selector
+        mode_layout = QHBoxLayout()
+        mode_label = QLabel("Launch Mode:")
+        mode_layout.addWidget(mode_label)
+        
+        self.launch_mode_combo = QComboBox()
+        self.launch_mode_combo.addItem("API (Background)", "api")
+        self.launch_mode_combo.addItem("Terminal Window", "terminal")
+        self.launch_mode_combo.addItem("Custom Command", "custom")
+        
+        # Load default from settings
+        from ..settings_manager import SettingsManager
+        settings = SettingsManager()
+        settings.load()
+        default_mode = settings.get('launch_mode', 'api')
+        
+        # Set current index based on default
+        mode_map = {'api': 0, 'terminal': 1, 'custom': 2}
+        self.launch_mode_combo.setCurrentIndex(mode_map.get(default_mode, 0))
+        
+        mode_layout.addWidget(self.launch_mode_combo)
+        mode_layout.addStretch()
+        layout.addLayout(mode_layout)
         
         # Apps table
         self.table = QTableWidget()
@@ -119,7 +143,7 @@ class AppSelectorDialog(QDialog):
                 self.table.insertRow(row)
                 
                 name_item = QTableWidgetItem(app.get('name', ''))
-                name_item.setBackground(QColor(240, 248, 255))  # Light blue for template apps
+                name_item.setForeground(QColor(70, 130, 180))
                 name_item.setData(Qt.ItemDataRole.UserRole, app.get('command', ''))
                 self.table.setItem(row, 0, name_item)
                 
@@ -136,7 +160,7 @@ class AppSelectorDialog(QDialog):
                 self.table.insertRow(row)
                 
                 name_item = QTableWidgetItem(app['name'])
-                name_item.setBackground(QColor(255, 248, 240))  # Light orange for custom apps
+                name_item.setForeground(QColor(255, 140, 0))  # Orange text for custom apps
                 name_item.setData(Qt.ItemDataRole.UserRole, app['command'])
                 self.table.setItem(row, 0, name_item)
                 
@@ -233,15 +257,19 @@ class AppSelectorDialog(QDialog):
         # Get command from UserRole data
         command = name_item.data(Qt.ItemDataRole.UserRole)
         
+        # Get selected launch mode
+        launch_mode = self.launch_mode_combo.currentData()
+        
         if command:
             self.selected_app = {
                 'name': name_item.text(),
-                'command': command
+                'command': command,
+                'launch_mode': launch_mode
             }
             self.accept()
         else:
             QMessageBox.warning(self, "Warning", "Invalid application command")
     
     def get_selected_app(self):
-        """Get selected application"""
+        """Get selected application with launch mode"""
         return self.selected_app
