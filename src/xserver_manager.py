@@ -12,6 +12,9 @@ import socket
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Import X11 constants
+from .x11_helper import X11_SOCKET_DIR
+
 
 class XServerManager:
     """X Server forwarding management"""
@@ -58,8 +61,14 @@ class XServerManager:
         from .x11_helper import get_display
         
         if self.os_type == "Linux":
-            # Linux (X11 or Wayland)
+            # Linux (X11 or Wayland with XWayland)
             display = get_display()
+            
+            # If no display found on Wayland, log helpful message
+            if not display and self.session_type == 'wayland':
+                logger.error("XWayland not available on Wayland session. Install xwayland package.")
+                return None
+            
             self.display = display
             return display
             
@@ -148,22 +157,27 @@ class XServerManager:
         if self.os_type == "Linux":
             # X11 socket
             if self.session_type == 'x11':
-                x11_socket = '/tmp/.X11-unix'
-                if os.path.exists(x11_socket):
-                    volumes[x11_socket] = {'bind': '/tmp/.X11-unix', 'mode': 'rw'}
+                if os.path.exists(X11_SOCKET_DIR):
+                    volumes[X11_SOCKET_DIR] = {'bind': X11_SOCKET_DIR, 'mode': 'rw'}
+                    logger.debug(f"X11: Mounting {X11_SOCKET_DIR}")
             
             # Wayland - requires XWayland
             elif self.session_type == 'wayland':
                 # XWayland creates X11 socket
-                x11_socket = '/tmp/.X11-unix'
-                if os.path.exists(x11_socket):
-                    volumes[x11_socket] = {'bind': '/tmp/.X11-unix', 'mode': 'rw'}
+                if os.path.exists(X11_SOCKET_DIR):
+                    volumes[X11_SOCKET_DIR] = {'bind': X11_SOCKET_DIR, 'mode': 'rw'}
+                    logger.info(f"Wayland: Mounting {X11_SOCKET_DIR} for XWayland")
+                else:
+                    logger.warning(f"Wayland: {X11_SOCKET_DIR} not found. XWayland may not be running.")
                 
                 # Wayland socket (optional, for native Wayland applications)
                 wayland_display = os.environ.get('WAYLAND_DISPLAY', 'wayland-0')
                 wayland_socket = f"/run/user/{os.getuid()}/{wayland_display}"
                 if os.path.exists(wayland_socket):
                     volumes[wayland_socket] = {'bind': f'/run/user/1000/{wayland_display}', 'mode': 'rw'}
+                    logger.info(f"Wayland: Mounting Wayland socket {wayland_display}")
+                else:
+                    logger.debug(f"Wayland socket not found: {wayland_socket}")
             
             # .Xauthority
             xauth = self.detect_xauthority()
@@ -205,10 +219,10 @@ class XServerManager:
                     
             elif self.session_type == 'wayland':
                 # Check XWayland
-                if os.path.exists('/tmp/.X11-unix'):
+                if os.path.exists(X11_SOCKET_DIR):
                     return True, "Wayland + XWayland active"
                 else:
-                    return False, "XWayland not running. Install: apt install xwayland"
+                    return False, f"XWayland not running. {X11_SOCKET_DIR} not found. Install: emerge --ask x11-base/xwayland"
                     
         elif self.os_type == "Darwin":
             # Check XQuartz on macOS
@@ -312,18 +326,31 @@ X11 setup on Linux:
 Wayland + XWayland setup on Linux:
 
 1. Make sure that XWayland installed:
-   sudo apt install xwayland  # Debian/Ubuntu
-   sudo dnf install xorg-x11-server-Xwayland  # Fedora
+   Debian/Ubuntu: sudo apt install xwayland
+   Fedora:        sudo dnf install xorg-x11-server-Xwayland
+   Gentoo:        sudo emerge --ask x11-base/xwayland
 
-2. Allow Docker access:
-   xhost +local:docker
+2. Install xhost for access control:
+   Debian/Ubuntu: sudo apt install x11-xserver-utils
+   Fedora:        sudo dnf install xorg-x11-server-utils
+   Gentoo:        sudo emerge --ask x11-apps/xhost
+
+3. Allow Docker access:
+   xhost +local:
 
 3. Check variables:
-   echo $DISPLAY
-   echo $WAYLAND_DISPLAY
+   echo $DISPLAY           # Should show :0 or :1
+   echo $WAYLAND_DISPLAY   # Should show wayland-0 or similar
+   ls -la {X11_SOCKET_DIR}/  # Check X11 socket exists
 
-4. Install x11-apps for testing:
-   sudo apt install x11-apps
+5. If DISPLAY is wrong or missing:
+   # Find correct display number
+   ls {X11_SOCKET_DIR}/
+   export DISPLAY=:1  # or :0, depending on what you found
+
+6. Install x11-apps for testing:
+   Debian/Ubuntu: sudo apt install x11-apps
+   Gentoo:        sudo emerge --ask x11-apps/xeyes
    xeyes  # test
 """
             else:

@@ -9,15 +9,64 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Constants
+X11_SOCKET_DIR = "/tmp/.X11-unix"
+
 
 def get_display():
     """
     Get DISPLAY environment variable with proper fallback
     
+    For Wayland sessions, ensures XWayland DISPLAY is properly detected.
+    
     Returns:
-        str: DISPLAY value or default ':0'
+        str: DISPLAY value or None if not available
     """
-    return os.environ.get('DISPLAY', ':0')
+    display = os.environ.get('DISPLAY')
+    logger.debug(f"[get_display] Initial DISPLAY from env: {display}")
+    
+    # If DISPLAY is not set but we're on Wayland, check for XWayland
+    if not display and platform.system() == "Linux":
+        wayland_display = os.environ.get('WAYLAND_DISPLAY')
+        logger.debug(f"[get_display] WAYLAND_DISPLAY: {wayland_display}")
+        
+        if wayland_display:
+            # On Wayland, XWayland typically creates :0 or :1
+            # Try to detect actual XWayland display
+            logger.info(f"[get_display] Wayland session detected, searching for XWayland sockets in {X11_SOCKET_DIR}")
+            
+            # List all available displays
+            available_displays = []
+            if os.path.exists(X11_SOCKET_DIR):
+                try:
+                    sockets = os.listdir(X11_SOCKET_DIR)
+                    logger.debug(f"[get_display] Found X11 sockets: {sockets}")
+                    available_displays = [s for s in sockets if s.startswith('X')]
+                except Exception as e:
+                    logger.error(f"[get_display] Failed to list {X11_SOCKET_DIR}: {e}")
+            
+            for display_num in range(0, 10):
+                x11_socket = f"{X11_SOCKET_DIR}/X{display_num}"
+                if os.path.exists(x11_socket):
+                    logger.info(f"[get_display] ✓ Detected XWayland display :{display_num} (socket: {x11_socket})")
+                    return f":{display_num}"
+                else:
+                    logger.debug(f"[get_display] ✗ Display :{display_num} socket not found: {x11_socket}")
+            
+            # If no X11 socket found but Wayland is running
+            logger.warning(f"[get_display] Wayland detected but no XWayland socket found in {X11_SOCKET_DIR}")
+            if available_displays:
+                logger.warning(f"[get_display] Available sockets: {available_displays}")
+            else:
+                logger.warning("[get_display] No X11 sockets found")
+            logger.warning("[get_display] Install xwayland package:")
+            logger.warning("  Gentoo: emerge --ask x11-base/xwayland")
+            return None
+    
+    # Return existing DISPLAY or fallback to :0 if we're on X11
+    result = display if display else ':0'
+    logger.debug(f"[get_display] Returning DISPLAY: {result}")
+    return result
 
 
 def setup_xhost_permissions():
@@ -32,12 +81,31 @@ def setup_xhost_permissions():
     if system not in ["Darwin", "Linux"]:
         return True  # Not needed on other systems
     
+    # Check if xhost is available
+    try:
+        subprocess.run(['which', 'xhost'], 
+                      capture_output=True, 
+                      timeout=1,
+                      check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        logger.warning("xhost not found. Install it for better X11 access control:")
+        logger.warning("  Debian/Ubuntu: apt install x11-xserver-utils")
+        logger.warning("  Fedora: dnf install xorg-x11-server-utils")
+        logger.warning("  Gentoo: emerge --ask x11-apps/xhost")
+        # Don't fail - containers can still work without xhost in some cases
+        return True
+    
     try:
         # Add localhost permissions
         subprocess.run(['xhost', '+localhost'], 
                      capture_output=True, timeout=2, check=False)
         subprocess.run(['xhost', '+127.0.0.1'], 
                      capture_output=True, timeout=2, check=False)
+        
+        # For better security on Linux, use +local: instead of +localhost
+        if system == "Linux":
+            subprocess.run(['xhost', '+local:'], 
+                         capture_output=True, timeout=2, check=False)
         
         # Add hostname permissions
         hostname_result = subprocess.run(['hostname'], 
@@ -55,7 +123,8 @@ def setup_xhost_permissions():
         
     except Exception as e:
         logger.warning(f"Could not configure xhost: {e}")
-        return False
+        # Don't fail completely - container might still work
+        return True
 
 
 def verify_display_socket():
@@ -66,12 +135,54 @@ def verify_display_socket():
         tuple: (bool, str) - (success, message)
     """
     display = get_display()
+    logger.info(f"[verify_display_socket] Verifying DISPLAY: {display}")
     
     if not display:
+        # Check if we're on Wayland without XWayland
+        if platform.system() == "Linux" and os.environ.get('WAYLAND_DISPLAY'):
+            logger.error("[verify_display_socket] Wayland detected but no DISPLAY found")
+            return False, "Wayland detected but XWayland is not running. Install xwayland package:\n" \
+                         "  Debian/Ubuntu: apt install xwayland\n" \
+                         "  Fedora: dnf install xorg-x11-server-Xwayland\n" \
+                         "  Gentoo: emerge --ask x11-base/xwayland"
+        logger.error("[verify_display_socket] DISPLAY environment variable not set")
         return False, "DISPLAY environment variable not set"
     
+    # On Linux (X11 or Wayland+XWayland), check X11 socket
+    if platform.system() == "Linux":
+        # Extract display number (e.g., :0 -> 0, :1 -> 1)
+        display_num = display.split(':')[-1].split('.')[0]
+        x11_socket = f"{X11_SOCKET_DIR}/X{display_num}"
+        
+        logger.debug(f"[verify_display_socket] Checking socket: {x11_socket}")
+        
+        # List all available X11 sockets for debugging
+        if os.path.exists(X11_SOCKET_DIR):
+            try:
+                available = os.listdir(X11_SOCKET_DIR)
+                logger.info(f"[verify_display_socket] Available X11 sockets: {available}")
+            except Exception as e:
+                logger.warning(f"[verify_display_socket] Could not list {X11_SOCKET_DIR}: {e}")
+        
+        if not os.path.exists(x11_socket):
+            wayland_display = os.environ.get('WAYLAND_DISPLAY')
+            logger.error(f"[verify_display_socket] Socket not found: {x11_socket}")
+            
+            if wayland_display:
+                return False, f"Wayland session detected but X11 socket missing: {x11_socket}\n" \
+                             "XWayland may not be running. Try:\n" \
+                             "  1. Restart your Wayland session\n" \
+                             "  2. Install xwayland package\n" \
+                             "  3. Check logs: journalctl --user -xe | grep -i xwayland"
+            else:
+                return False, f"X11 socket not found: {x11_socket}\n" \
+                             "Is X server running?"
+        
+        logger.info(f"[verify_display_socket] ✓ X11 socket verified: {x11_socket}")
+        return True, f"DISPLAY configured correctly ({display})"
+    
     # On macOS with XQuartz, check socket path
-    if platform.system() == "Darwin" and ':' in display:
+    elif platform.system() == "Darwin" and ':' in display:
         # DISPLAY format: /private/tmp/com.apple.launchd.XXX/org.xquartz:0
         # We need to check the socket file itself
         socket_path = display  # Full path with :0

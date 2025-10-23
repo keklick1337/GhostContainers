@@ -38,30 +38,40 @@ def run_gui_app(
         # Setup X11 permissions and verify display
         from .x11_helper import setup_xhost_permissions, verify_display_socket, check_xquartz_running, get_display
         
+        logger.info(f"[run_gui_app] Starting GUI app '{app}' in container '{name}'")
+        logger.info(f"[run_gui_app] Launch mode: {launch_mode}")
+        
         # Check if XQuartz is running on macOS
         system = platform.system()
+        logger.debug(f"[run_gui_app] Platform: {system}")
+        
         if system == "Darwin":
             if not check_xquartz_running():
-                logger.error("XQuartz is not running! Please start XQuartz first.")
+                logger.error("[run_gui_app] XQuartz is not running!")
                 return {'success': False, 'error': 'XQuartz is not running. Please start XQuartz and try again.'}
         
         # Verify DISPLAY socket
         display_ok, display_msg = verify_display_socket()
         if not display_ok:
-            logger.error(f"Display verification failed: {display_msg}")
+            logger.error(f"[run_gui_app] Display verification failed: {display_msg}")
             return {'success': False, 'error': display_msg}
         
-        logger.info(f"Display check: {display_msg}")
+        logger.info(f"[run_gui_app] Display check: {display_msg}")
         
         # Setup xhost permissions
-        if not setup_xhost_permissions():
-            logger.warning("Failed to setup xhost permissions, continuing anyway...")
+        xhost_ok = setup_xhost_permissions()
+        if xhost_ok:
+            logger.info("[run_gui_app] xhost permissions configured")
+        else:
+            logger.warning("[run_gui_app] Failed to setup xhost permissions, continuing anyway...")
         
         # Get container to find its image and volumes
         container = docker_manager.client.containers.get(name)
+        logger.debug(f"[run_gui_app] Container found: {container.id[:12]}")
         
         # Get DISPLAY from environment
         display = get_display()
+        logger.info(f"[run_gui_app] Using DISPLAY: {display}")
         
         # Prepare environment variables
         # On macOS, use host.docker.internal instead of socket path

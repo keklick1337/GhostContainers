@@ -111,10 +111,25 @@ class ContainerCreateThread(QThread):
             # Prepare volumes - start with user-specified volumes
             volumes = self.config.get('volumes', {}).copy()
             
-            # Add GUI support volumes on macOS
+            # Add GUI support volumes using XServerManager
             if self.config.get('gui', False):
                 import platform
-                if platform.system() == "Darwin":  # macOS with XQuartz
+                from ..x11_helper import X11_SOCKET_DIR
+                from ..xserver_manager import XServerManager
+                
+                # Use XServerManager to get proper volume mounts for all platforms
+                xserver_mgr = XServerManager()
+                x11_volumes = xserver_mgr.get_volume_mounts()
+                
+                # Log X11 volume mounts
+                for host_path, mount_info in x11_volumes.items():
+                    self.log_signal.emit(f"\033[36m[X11] Mounting: {host_path} -> {mount_info['bind']} ({mount_info.get('mode', 'rw')})\033[0m")
+                
+                # Merge X11 volumes with user volumes
+                volumes.update(x11_volumes)
+                
+                # On macOS, additional socket handling for XQuartz
+                if platform.system() == "Darwin":
                     # Get DISPLAY socket path
                     display = self.config.get('environment', {}).get('DISPLAY', '')
                     if display and ':' in display:
@@ -122,14 +137,19 @@ class ContainerCreateThread(QThread):
                         # Format: /private/tmp/com.apple.launchd.xxx/org.xquartz:0
                         socket_path = display.split(':')[0]
                         if socket_path and os.path.exists(socket_path):
-                            volumes[socket_path] = {'bind': '/tmp/.X11-unix', 'mode': 'rw'}
-                            self.log_signal.emit(f"Mounting X11 socket: {socket_path}")
+                            # This might override XServerManager's mount, but with correct path
+                            volumes[socket_path] = {'bind': X11_SOCKET_DIR, 'mode': 'rw'}
+                            self.log_signal.emit(f"\033[36m[X11] macOS: Mounting XQuartz socket: {socket_path}\033[0m")
             
             # Log shared folders
+            from ..x11_helper import X11_SOCKET_DIR
             for host_path, mount_info in volumes.items():
-                if '/tmp/.X11-unix' not in mount_info['bind']:  # Don't log X11 socket
+                if X11_SOCKET_DIR not in mount_info['bind']:  # Don't log X11 socket
                     mode = mount_info.get('mode', 'rw')
                     self.log_signal.emit(f"Volume: {host_path} -> {mount_info['bind']} ({mode})")
+                else:
+                    # Log X11 socket with special formatting
+                    self.log_signal.emit(f"\033[36m[X11] Mounting: {host_path} -> {mount_info['bind']}\033[0m")
             
             # Prepare kwargs for create_container
             create_kwargs = {}
@@ -179,6 +199,15 @@ class ContainerCreateThread(QThread):
                 
                 # Prepare environment
                 env_dict = self.config.get('environment', {}).copy()
+                
+                # Log DISPLAY configuration
+                if 'DISPLAY' in env_dict:
+                    self.log_signal.emit(f"\033[36m[ENV] DISPLAY={env_dict['DISPLAY']}\033[0m")
+                
+                # Log all environment variables
+                for key, value in env_dict.items():
+                    if key != 'DISPLAY':  # Already logged above
+                        self.log_signal.emit(f"\033[90m[ENV] {key}={value}\033[0m")
                 
                 # Parse command for inline environment variables (e.g., "MOZ_X11_EGL=1 firefox")
                 import shlex

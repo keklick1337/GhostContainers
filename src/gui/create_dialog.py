@@ -16,6 +16,7 @@ from PyQt6.QtGui import QFont
 from ..localization import t
 from .threads import ContainerCreateThread
 from .logs_window import ContainerLogsWindow
+from .log_viewer_widget import LogViewerWidget
 from ..settings_manager import SettingsManager
 import subprocess
 import platform as platform_module
@@ -222,16 +223,14 @@ class CreateContainerDialog(QDialog):
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
         
-        # Log output
+        # Log output with ANSI color support
         log_label = QLabel(t('labels.build_log') + ":")
         layout.addWidget(log_label)
         
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setFont(QFont("Monaco", 10))
-        self.log_text.setMinimumHeight(300)
-        self.log_text.setStyleSheet("background-color: #1e1e1e; color: #d4d4d4;")
-        layout.addWidget(self.log_text)
+        # Use LogViewerWidget for ANSI color support (same as container logs)
+        self.log_viewer = LogViewerWidget(show_controls=False)
+        self.log_viewer.setMinimumHeight(300)
+        layout.addWidget(self.log_viewer)
         
         # Buttons
         button_box = QDialogButtonBox(
@@ -427,9 +426,9 @@ class CreateContainerDialog(QDialog):
         from ..x11_helper import setup_xhost_permissions
         
         if setup_xhost_permissions():
-            self.log_text.append("✓ X11 permissions configured")
+            self.log_viewer.append_line("\033[32m✓ X11 permissions configured\033[0m")
         else:
-            self.log_text.append("⚠ Could not configure xhost permissions")
+            self.log_viewer.append_line("\033[33m⚠ Could not configure xhost permissions\033[0m")
     
     def _create_container(self):
         """Start container creation"""
@@ -526,6 +525,8 @@ class CreateContainerDialog(QDialog):
             import platform
             display = get_display()
             
+            self.log_viewer.append_line(f"\033[36m[X11] Host DISPLAY: {display}\033[0m")
+            
             # On macOS with XQuartz, use host.docker.internal
             if platform.system() == "Darwin" and display:
                 # Keep full path for socket mounting, but use host.docker.internal for DISPLAY
@@ -535,8 +536,10 @@ class CreateContainerDialog(QDialog):
                 if ':' in display:
                     display_num = display.split(':')[-1]
                     config['environment']['DISPLAY'] = f"host.docker.internal:{display_num}"
+                    self.log_viewer.append_line(f"\033[36m[X11] Container DISPLAY: host.docker.internal:{display_num}\033[0m")
             else:
                 config['environment']['DISPLAY'] = display
+                self.log_viewer.append_line(f"\033[36m[X11] Container DISPLAY: {display}\033[0m")
             
             config['environment']['XAUTHORITY'] = '/tmp/.Xauthority'
         
@@ -595,11 +598,8 @@ class CreateContainerDialog(QDialog):
         self.create_thread.start()
     
     def _append_log(self, message):
-        """Append message to log"""
-        self.log_text.append(message)
-        self.log_text.verticalScrollBar().setValue(
-            self.log_text.verticalScrollBar().maximum()
-        )
+        """Append message to log with ANSI color support"""
+        self.log_viewer.append_line(message)
     
     def _open_logs_window(self, container_id, container_name):
         """Open logs window for the created container"""
