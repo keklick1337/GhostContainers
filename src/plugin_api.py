@@ -27,14 +27,20 @@ class PluginHook:
     
     def execute(self, *args, **kwargs):
         """Execute all registered callbacks"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"Executing hook {self.name} with {len(self.callbacks)} callbacks")
+        
         results = []
         for callback in self.callbacks:
             try:
                 result = callback(*args, **kwargs)
                 results.append(result)
             except Exception as e:
-                import logging
-                logging.error(f"Error executing hook {self.name}: {e}")
+                logger.error(f"Error executing hook {self.name} callback {callback.__name__}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
         return results
 
 
@@ -170,21 +176,6 @@ class TabPlugin(GUIPlugin):
     Simplified base class for plugins that primarily add a single tab
     """
     
-    def initialize(self, app_context: Dict[str, Any]) -> bool:
-        """Initialize plugin with application context"""
-        # Call parent initialization
-        super().initialize(app_context)
-        
-        # Store plugin_api reference
-        self.plugin_api = app_context.get('plugin_api')
-        
-        # Register any hooks that were added before initialization
-        if self.plugin_api and self._registered_hooks:
-            for hook_name, callback in self._registered_hooks.items():
-                self.plugin_api.add_hook(hook_name, callback)
-        
-        return True
-    
     @abstractmethod
     def create_tab_widget(self) -> QWidget:
         """
@@ -204,10 +195,27 @@ class TabPlugin(GUIPlugin):
         """Get optional tab icon"""
         return None
     
+    def on_tab_created(self):
+        """Called after tab widget is created and added to UI.
+        
+        Override this method to perform post-creation initialization
+        that requires the tab widget to be fully set up.
+        """
+        pass
+    
     def initialize(self, app_context: Dict[str, Any]) -> bool:
-        """Initialize and create tab"""
+        """Initialize plugin with application context and create tab"""
+        # Call parent initialization
         if not super().initialize(app_context):
             return False
+        
+        # Store plugin_api reference
+        self.plugin_api = app_context.get('plugin_api')
+        
+        # Register any hooks that were added before initialization
+        if self.plugin_api and self._registered_hooks:
+            for hook_name, callback in self._registered_hooks.items():
+                self.plugin_api.add_hook(hook_name, callback)
         
         # Create and add tab
         try:
@@ -216,6 +224,10 @@ class TabPlugin(GUIPlugin):
             icon = self.get_tab_icon()
             
             self.add_tab(widget, title, icon)
+            
+            # Call post-creation hook
+            self.on_tab_created()
+            
             return True
             
         except Exception as e:
@@ -245,6 +257,41 @@ class PluginAPI:
     def __init__(self):
         self.hooks: Dict[str, PluginHook] = {}
         self.plugins: List[GUIPlugin] = []
+        self.app_context: Dict[str, Any] = {}
+    
+    def set_app_context(self, context: Dict[str, Any]):
+        """Set application context"""
+        self.app_context = context
+    
+    def get_containers(self, all_containers: bool = True, show_all: bool = True) -> List[Dict[str, Any]]:
+        """
+        Get list of containers
+        
+        Args:
+            all_containers: Show all (including stopped)
+            show_all: Show all Docker containers or only tracked by this app
+            
+        Returns:
+            List of containers with information
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        docker_manager = self.app_context.get('docker_manager')
+        logger.info(f"PluginAPI.get_containers called: docker_manager={docker_manager is not None}, app_context keys={list(self.app_context.keys())}")
+        
+        if docker_manager:
+            containers = docker_manager.list_containers(all_containers=all_containers, show_all=show_all)
+            logger.info(f"PluginAPI.get_containers: returned {len(containers)} containers")
+            return containers
+        
+        logger.warning("PluginAPI.get_containers: docker_manager is None!")
+        return []
+    
+    def add_hook(self, hook_name: str, callback: Callable):
+        """Add a callback to a hook (creates hook if doesn't exist)"""
+        hook = self.register_hook(hook_name)
+        hook.register(callback)
     
     def register_hook(self, hook_name: str) -> PluginHook:
         """Register a new hook point"""

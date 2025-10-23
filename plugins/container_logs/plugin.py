@@ -77,39 +77,22 @@ class ContainerLogsPlugin(TabPlugin):
         self.tab_widget = widget
         return widget
     
-    def initialize(self, app_context):
-        """Initialize plugin with app context"""
-        result = super().initialize(app_context)
-        
-        # Load container list after initialization
-        if self.docker_manager:
-            self._refresh_container_list()
-        
-        return result
+    def on_tab_created(self):
+        """Called after tab widget is created and added to UI"""
+        # Refresh container list after tab is fully created
+        self._refresh_container_list()
     
     def _refresh_container_list(self):
-        """Refresh container list from Docker"""
-        if not self.docker_manager:
+        """Refresh container list from PluginAPI"""
+        if not self.plugin_api or not self.log_container_combo:
             return
         
-        # Get containers based on show_all checkbox
-        show_all = self.show_all_check.isChecked() if self.show_all_check else False
-        containers = self.docker_manager.list_containers(all_containers=True, show_all=show_all)
+        # Get show_all state
+        show_all = self.show_all_check.isChecked() if self.show_all_check else True
         
-        # Update combo box
-        if self.log_container_combo:
-            current_selection = self.log_container_combo.currentText()
-            self.log_container_combo.clear()
-            
-            # Add all container names
-            for container in containers:
-                self.log_container_combo.addItem(container['name'])
-            
-            # Restore previous selection if it still exists
-            if current_selection:
-                index = self.log_container_combo.findText(current_selection)
-                if index >= 0:
-                    self.log_container_combo.setCurrentIndex(index)
+        # Get containers using PluginAPI
+        containers = self.plugin_api.get_containers(all_containers=True, show_all=show_all)
+        self.update_containers(containers)
     
     def update_containers(self, containers):
         """Update container list (called by hook)"""

@@ -89,14 +89,51 @@ class FileBrowserPlugin(TabPlugin):
         self.tab_widget = widget
         return widget
     
+    def on_tab_created(self):
+        """Called after tab widget is created and added to UI"""
+        # Refresh container list after tab is fully created
+        self._refresh_container_list()
+    
+    def _refresh_container_list(self):
+        """Refresh container list from PluginAPI"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"FileBrowser._refresh_container_list called")
+        logger.info(f"  self.plugin_api = {self.plugin_api}")
+        logger.info(f"  self.file_container_combo = {self.file_container_combo}")
+        logger.info(f"  Check: not plugin_api = {not self.plugin_api}")
+        logger.info(f"  Check: not combo = {not self.file_container_combo}")
+        
+        if not self.plugin_api:
+            logger.warning("FileBrowser: plugin_api is None/False")
+            return
+            
+        if not self.file_container_combo:
+            logger.warning("FileBrowser: file_container_combo is None/False")
+            return
+        
+        # Get containers using PluginAPI
+        logger.info("FileBrowser: calling plugin_api.get_containers()")
+        containers = self.plugin_api.get_containers(all_containers=True, show_all=True)
+        logger.info(f"FileBrowser: got {len(containers)} containers")
+        self.update_containers(containers)
+    
     def update_containers(self, containers):
-        """Update container list"""
+        """Update container list (called by hook)"""
         if not self.file_container_combo:
             return
             
+        current_selection = self.file_container_combo.currentText()
         self.file_container_combo.clear()
         running = [c['name'] for c in containers if c['status'] == 'running']
         self.file_container_combo.addItems(running)
+        
+        # Restore selection if still exists
+        if current_selection and current_selection in running:
+            index = self.file_container_combo.findText(current_selection)
+            if index >= 0:
+                self.file_container_combo.setCurrentIndex(index)
     
     def refresh(self):
         """Refresh file list"""

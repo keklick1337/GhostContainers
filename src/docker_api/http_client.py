@@ -138,6 +138,11 @@ class DockerHTTPClient:
             if not response_data:
                 return None
             
+            # Check if response is binary data (e.g., tar archive)
+            content_type = response.getheader('Content-Type', '')
+            if 'application/x-tar' in content_type or 'application/octet-stream' in content_type:
+                return response_data  # Return raw bytes
+            
             # Try to parse as JSON
             try:
                 return json.loads(response_data.decode('utf-8'))

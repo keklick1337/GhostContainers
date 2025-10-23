@@ -75,6 +75,10 @@ class GhostContainersGUI(QMainWindow):
                 'main_window': self,
                 'plugin_api': self.plugin_manager.plugin_api
             }
+            
+            # Set context in PluginAPI for get_containers() method
+            self.plugin_manager.plugin_api.set_app_context(plugin_context)
+            
             self.plugin_manager.set_app_context(plugin_context)
             self.plugin_manager.load_all_plugins()
             self.plugin_manager.initialize_plugins()

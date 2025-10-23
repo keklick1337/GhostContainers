@@ -69,6 +69,14 @@ class Container:
             self.id, stdout=stdout, stderr=stderr, stream=stream,
             timestamps=timestamps, tail=tail, since=since, follow=follow
         )
+    
+    def put_archive(self, path: str, data: bytes):
+        """Upload tar archive to container"""
+        return self.client.put_archive(self.id, path, data)
+    
+    def get_archive(self, path: str) -> bytes:
+        """Download path from container as tar archive"""
+        return self.client.get_archive(self.id, path)
 
 
 class ContainerCollection:
@@ -340,4 +348,42 @@ class ContainerCollection:
             f'/containers/{container_id}/logs',
             params=params,
             stream=stream
+        )
+    
+    def put_archive(self, container_id: str, path: str, data: bytes):
+        """
+        Upload tar archive to container
+        
+        Args:
+            container_id: Container ID
+            path: Path in container where to extract archive
+            data: Tar archive as bytes
+            
+        Returns:
+            True if successful
+        """
+        params = {'path': path}
+        self.client.http.put(
+            f'/containers/{container_id}/archive',
+            params=params,
+            data=data
+        )
+        return True
+    
+    def get_archive(self, container_id: str, path: str) -> bytes:
+        """
+        Download path from container as tar archive
+        
+        Args:
+            container_id: Container ID
+            path: Path in container to download
+            
+        Returns:
+            Tar archive as bytes
+        """
+        params = {'path': path}
+        return self.client.http.get(
+            f'/containers/{container_id}/archive',
+            params=params,
+            stream=False
         )
