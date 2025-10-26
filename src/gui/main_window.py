@@ -141,14 +141,23 @@ class GhostContainersGUI(QMainWindow):
         # Load tabs from plugins
         for tab_plugin in self.plugin_manager.tab_plugins:
             try:
-                tab_widget = tab_plugin.create_tab_widget()
+                # Use tab_widget already created in plugin.initialize()
+                # Don't call create_tab_widget() again - it would create new widgets
+                # and break references like self.log_container_combo
+                tab_widget = getattr(tab_plugin, 'tab_widget', None)
+                
                 if tab_widget:
                     # Get tab name from plugin's name property
                     tab_name = getattr(tab_plugin, 'name', 'Plugin Tab')
                     self.tabs.addTab(tab_widget, tab_name)
                     logger.info(f"Added plugin tab: {tab_name}")
+                else:
+                    logger.warning(f"Plugin {tab_plugin.name} has no tab_widget - skipping")
             except Exception as e:
                 logger.error(f"Failed to create tab from plugin {tab_plugin.__class__.__name__}: {e}")
+        
+        # After all tabs created, refresh containers to populate plugin comboboxes
+        self.refresh_containers()
         
         # Status bar
         self.statusBar().showMessage(t('status.ready'))
@@ -300,7 +309,7 @@ class GhostContainersGUI(QMainWindow):
         self.operation_thread = None
     
     def open_shell(self, user: str):
-        """Open shell in new terminal window"""
+        """Open shell in new terminal window using TerminalLauncher"""
         name = self.get_selected_container()
         if not name:
             return
@@ -320,45 +329,18 @@ class GhostContainersGUI(QMainWindow):
                                    t('messages.failed_start_container').format(name=name))
                 return
         
-        # Detect OS and terminal
-        system = platform.system()
+        # Use TerminalLauncher for unified terminal handling
+        from ..terminal_launcher import TerminalLauncher
         
-        if system == "Darwin":  # macOS
-            if subprocess.run(['which', 'iterm'], capture_output=True).returncode == 0:
-                script = f'''
-tell application "iTerm"
-    create window with default profile
-    tell current session of current window
-        write text "docker exec -it -u {user} {name} /bin/bash"
-    end tell
-end tell
-'''
-                subprocess.Popen(['osascript', '-e', script])
-            else:
-                script = f'''
-tell application "Terminal"
-    do script "docker exec -it -u {user} {name} /bin/bash"
-    activate
-end tell
-'''
-                subprocess.Popen(['osascript', '-e', script])
+        launcher = TerminalLauncher()
+        as_root = (user == 'root')
         
-        elif system == "Linux":
-            terminals = [
-                ('gnome-terminal', ['gnome-terminal', '--', 'docker', 'exec', '-it', '-u', user, name, '/bin/bash']),
-                ('konsole', ['konsole', '-e', 'docker', 'exec', '-it', '-u', user, name, '/bin/bash']),
-                ('xterm', ['xterm', '-e', 'docker', 'exec', '-it', '-u', user, name, '/bin/bash']),
-            ]
-            
-            for term_name, cmd in terminals:
-                if subprocess.run(['which', term_name], capture_output=True).returncode == 0:
-                    subprocess.Popen(cmd)
-                    return
-            
-            QMessageBox.warning(self, t('dialogs.error_title'), t('messages.no_supported_terminal'))
-        else:
-            QMessageBox.warning(self, t('dialogs.error_title'), 
-                              t('messages.unsupported_os').format(os=system))
+        if not launcher.launch_shell(name, as_root=as_root):
+            QMessageBox.warning(
+                self, 
+                t('dialogs.error_title'), 
+                "Failed to open terminal. Please check if a terminal emulator is installed."
+            )
     
     def run_gui_app(self):
         """Run GUI application - show app selector dialog"""

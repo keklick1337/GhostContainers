@@ -34,7 +34,7 @@ GhostContainers is a modern, feature-rich Docker container management applicatio
 
 ## Roadmap
 
-- [ ] Fix bug with containers dropdown in plugins
+- [x] Fix bug with containers dropdown in plugins
 - [ ] Volume management interface
 - [ ] Tor network isolation for containers
 - [ ] Docker Compose support

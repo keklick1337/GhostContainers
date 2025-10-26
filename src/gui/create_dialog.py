@@ -602,9 +602,18 @@ class CreateContainerDialog(QDialog):
         self.log_viewer.append_line(message)
     
     def _open_logs_window(self, container_id, container_name):
-        """Open logs window for the created container"""
+        """Open logs window for the created container with build log"""
         # Check if user wants to see logs window (from dialog checkbox)
         if self.show_logs_check.isChecked():
+            # Collect build log from log_viewer
+            build_log = []
+            
+            # Extract text from log_viewer widget
+            # We need to get the plain text and split by lines
+            log_text = self.log_viewer.logs_text.toPlainText()
+            if log_text:
+                build_log = log_text.split('\n')
+            
             # Create logs window with main window as parent to keep it alive
             # Get main window (parent of this dialog)
             main_window = self.parent()
@@ -613,7 +622,8 @@ class CreateContainerDialog(QDialog):
                 self.docker_manager,
                 container_id,
                 container_name,
-                main_window  # Use main window as parent
+                main_window,  # Use main window as parent
+                build_log=build_log  # Pass build log
             )
             
             # Store reference in main window to prevent garbage collection
@@ -623,6 +633,13 @@ class CreateContainerDialog(QDialog):
                 main_window._active_logs_windows = [logs_window]
             
             logs_window.show()
+            
+            # CRITICAL: Force window to front after show()
+            # Use QTimer to delay activation slightly - ensures window appears on top
+            # after Create Dialog closes
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, lambda: logs_window.activateWindow())
+            QTimer.singleShot(150, lambda: logs_window.raise_())
     
     def _creation_finished(self, success, message):
         """Handle creation finished"""

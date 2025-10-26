@@ -45,7 +45,7 @@ class LogCaptureHandler(logging.Handler):
 class ContainerLogsWindow(QDialog):
     """Window for displaying container logs with ANSI color support"""
     
-    def __init__(self, docker_manager, container_id, container_name, parent=None):
+    def __init__(self, docker_manager, container_id, container_name, parent=None, build_log=None):
         # Create as independent window without parent to prevent auto-close
         super().__init__(None)
         
@@ -57,17 +57,33 @@ class ContainerLogsWindow(QDialog):
         self.container_name = container_name
         self.logs_thread = None
         self.log_handler = None
+        self.build_log = build_log  # Store build log to display first
         
-        # Make window independent and prevent auto-deletion
-        self.setWindowFlags(Qt.WindowType.Window)
+        # Make window independent, stay on top, and prevent auto-deletion
+        # Qt.WindowType.Window - independent window
+        # Qt.WindowType.WindowStaysOnTopHint - always on top (CRITICAL for visibility!)
+        self.setWindowFlags(
+            Qt.WindowType.Window | 
+            Qt.WindowType.WindowStaysOnTopHint
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         
         self.setWindowTitle(f"Container Logs - {container_name}")
         self.setMinimumSize(900, 600)
         
         self.init_ui()
+        
+        # Show build log first if provided
+        if self.build_log:
+            self._display_build_log()
+        
         self.start_logs()
         self.setup_log_capture()
+        
+        # CRITICAL: Activate and raise window to bring to front
+        self.activateWindow()
+        self.raise_()
+        self.setFocus()
     
     def init_ui(self):
         """Initialize UI"""
@@ -136,6 +152,25 @@ class ContainerLogsWindow(QDialog):
         # Add separator with ANSI colors
         self.log_viewer.append_line("\n" + "="*60)
         self.log_viewer.append_line("\033[36m[APPLICATION LOGS]\033[0m Real-time system events")
+        self.log_viewer.append_line("="*60 + "\n")
+    
+    def _display_build_log(self):
+        """Display build log at the beginning of logs window"""
+        if not self.build_log:
+            return
+        
+        # Add header
+        self.log_viewer.append_line("="*60)
+        self.log_viewer.append_line("\033[33m[BUILD LOG]\033[0m Container creation and build process")
+        self.log_viewer.append_line("="*60 + "\n")
+        
+        # Add build log lines
+        for line in self.build_log:
+            self.log_viewer.append_line(line)
+        
+        # Add separator before container logs
+        self.log_viewer.append_line("\n" + "="*60)
+        self.log_viewer.append_line("\033[32m[CONTAINER LOGS]\033[0m Real-time container output")
         self.log_viewer.append_line("="*60 + "\n")
     
     def _on_app_log(self, log_message: str):
@@ -291,6 +326,15 @@ class ContainerLogsWindow(QDialog):
                 self.log_viewer.append_line(f"\n\033[31m[ERROR]\033[0m Failed to kill process: {e}\n")
                 self.status_label.setText(f"Kill failed: {e}")
                 logger.error(f"Failed to kill process in container {self.container_name}: {e}")
+    
+    def showEvent(self, event):
+        """Handle window show event - ensure window comes to front"""
+        super().showEvent(event)
+        
+        # Force window to front when shown
+        self.activateWindow()
+        self.raise_()
+        self.setFocus()
     
     def closeEvent(self, event):
         """Handle window close"""

@@ -148,7 +148,11 @@ class DockerHTTPClient:
                 return json.loads(response_data.decode('utf-8'))
             except json.JSONDecodeError:
                 # Return raw data if not JSON
-                return response_data.decode('utf-8')
+                try:
+                    return response_data.decode('utf-8')
+                except UnicodeDecodeError:
+                    # Return bytes if can't decode as UTF-8
+                    return response_data
         
         finally:
             # Only close if not streaming

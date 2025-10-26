@@ -27,7 +27,7 @@ class ImageManagerPlugin(TabPlugin):
         self.name = "Image Manager"
         self.version = "1.0.0"
         self.description = "Manage Docker images"
-        self.author = "GhostContainers Team"
+        self.author = "GhostContainers"
         self.icon = "🖼️"
         self.widget = None
         self.docker_manager = None
@@ -38,6 +38,11 @@ class ImageManagerPlugin(TabPlugin):
     
     def initialize(self, app_context):
         """Initialize plugin with dependencies"""
+        # Call parent TabPlugin.initialize to create tab widget
+        if not super().initialize(app_context):
+            return False
+        
+        # Store additional dependencies
         self.docker_manager = app_context.get('docker_manager')
         self.db = app_context.get('db')
         return True
@@ -86,6 +91,9 @@ class ImageManagerPlugin(TabPlugin):
         # Info label
         self.info_label = QLabel()
         layout.addWidget(self.info_label)
+        
+        # Store as tab_widget for TabPlugin
+        self.tab_widget = self.widget
         
         # Initial load
         self._refresh_images()

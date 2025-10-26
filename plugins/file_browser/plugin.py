@@ -7,7 +7,7 @@ import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
     QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem, QMessageBox,
-    QFileDialog, QMenu
+    QFileDialog, QMenu, QCheckBox
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
@@ -27,7 +27,7 @@ class FileBrowserPlugin(TabPlugin):
         self.name = "File Browser"
         self.version = "2.0.0"
         self.description = "Browse and manage files in containers"
-        self.author = "GhostContainers Team"
+        self.author = "GhostContainers"
         
         self.tab_widget = None
         self.file_container_combo = None
@@ -47,34 +47,45 @@ class FileBrowserPlugin(TabPlugin):
         
         # Container selector
         selector_layout = QHBoxLayout()
-        selector_layout.addWidget(QLabel(t('labels.container') + ":"))
+        selector_layout.addWidget(QLabel(t('labels.container') + ":", widget))
         
-        self.file_container_combo = QComboBox()
+        self.file_container_combo = QComboBox(widget)  # Set parent
         selector_layout.addWidget(self.file_container_combo)
         
-        browse_btn = QPushButton(t('buttons.browse'))
+        browse_btn = QPushButton(t('buttons.browse'), widget)
         browse_btn.clicked.connect(self.browse_files)
         selector_layout.addWidget(browse_btn)
         
-        upload_btn = QPushButton("⬆ " + t('labels.upload_file'))
+        upload_btn = QPushButton("⬆ " + t('labels.upload_file'), widget)
         upload_btn.clicked.connect(self.upload_file)
         selector_layout.addWidget(upload_btn)
         
         selector_layout.addStretch()
+        
+        # Show all containers checkbox
+        self.show_all_check = QCheckBox(t('labels.show_all_containers'), widget)
+        self.show_all_check.stateChanged.connect(self.refresh_container_list)
+        selector_layout.addWidget(self.show_all_check)
+        
+        # Refresh button
+        refresh_btn = QPushButton(t('buttons.refresh'), widget)
+        refresh_btn.clicked.connect(self.refresh_container_list)
+        selector_layout.addWidget(refresh_btn)
+        
         layout.addLayout(selector_layout)
         
         # Path
         path_layout = QHBoxLayout()
-        path_layout.addWidget(QLabel(t('labels.path') + ":"))
+        path_layout.addWidget(QLabel(t('labels.path') + ":", widget))
         
-        self.file_path_edit = QLineEdit("/")
+        self.file_path_edit = QLineEdit("/", widget)
         self.file_path_edit.returnPressed.connect(self.browse_files)
         path_layout.addWidget(self.file_path_edit)
         
         layout.addLayout(path_layout)
         
         # Files tree
-        self.files_tree = QTreeWidget()
+        self.files_tree = QTreeWidget(widget)
         self.files_tree.setHeaderLabels([
             t('labels.name'),
             t('labels.type'),
@@ -89,48 +100,39 @@ class FileBrowserPlugin(TabPlugin):
         self.tab_widget = widget
         return widget
     
-    def on_tab_created(self):
-        """Called after tab widget is created and added to UI"""
-        # Refresh container list after tab is fully created
-        self._refresh_container_list()
-    
-    def _refresh_container_list(self):
-        """Refresh container list from PluginAPI"""
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        logger.info(f"FileBrowser._refresh_container_list called")
-        logger.info(f"  self.plugin_api = {self.plugin_api}")
-        logger.info(f"  self.file_container_combo = {self.file_container_combo}")
-        logger.info(f"  Check: not plugin_api = {not self.plugin_api}")
-        logger.info(f"  Check: not combo = {not self.file_container_combo}")
-        
+    def refresh_container_list(self):
+        """Refresh container list with current show_all setting"""
         if not self.plugin_api:
-            logger.warning("FileBrowser: plugin_api is None/False")
-            return
-            
-        if not self.file_container_combo:
-            logger.warning("FileBrowser: file_container_combo is None/False")
             return
         
-        # Get containers using PluginAPI
-        logger.info("FileBrowser: calling plugin_api.get_containers()")
-        containers = self.plugin_api.get_containers(all_containers=True, show_all=True)
-        logger.info(f"FileBrowser: got {len(containers)} containers")
+        # Get show_all state from this plugin's checkbox
+        show_all = self.show_all_check.isChecked() if self.show_all_check else False
+        
+        # Get containers using PluginAPI with our show_all setting
+        containers = self.plugin_api.get_containers(all_containers=True, show_all=show_all)
         self.update_containers(containers)
     
     def update_containers(self, containers):
         """Update container list (called by hook)"""
-        if not self.file_container_combo:
+        # Check for None explicitly, not bool() because PyQt6 deleted widgets return False
+        if self.file_container_combo is None:
+            return
+        
+        # Try to access the widget to ensure it hasn't been deleted
+        try:
+            _ = self.file_container_combo.count()
+        except RuntimeError:
             return
             
         current_selection = self.file_container_combo.currentText()
         self.file_container_combo.clear()
-        running = [c['name'] for c in containers if c['status'] == 'running']
-        self.file_container_combo.addItems(running)
+        
+        # Show all containers from the list (filtering already done by show_all in get_containers)
+        all_names = [c['name'] for c in containers]
+        self.file_container_combo.addItems(all_names)
         
         # Restore selection if still exists
-        if current_selection and current_selection in running:
+        if current_selection and current_selection in all_names:
             index = self.file_container_combo.findText(current_selection)
             if index >= 0:
                 self.file_container_combo.setCurrentIndex(index)

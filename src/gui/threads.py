@@ -250,41 +250,29 @@ class ContainerCreateThread(QThread):
                 
                 self.log_signal.emit(f"Launch mode: {launch_mode}")
                 
-                if launch_mode == 'terminal' and system == "Darwin":
-                    # macOS - run in Terminal with auto-remove
-                    env_flags = ' '.join([f'-e {k}={v}' for k, v in env_dict.items()])
+                # Use TerminalLauncher for unified terminal/command execution
+                if launch_mode in ['terminal', 'custom']:
+                    from ..terminal_launcher import TerminalLauncher
                     
-                    # Add volume flags from config
-                    volume_flags = ''
-                    if volumes:
-                        for host_path, mount_info in volumes.items():
-                            container_path = mount_info['bind']
-                            mode = mount_info.get('mode', 'rw')
-                            volume_flags += f' -v {host_path}:{container_path}:{mode}'
+                    launcher = TerminalLauncher()
+                    success = launcher.launch(
+                        container_name=container_name,
+                        command=parsed_cmd,
+                        mode=launch_mode,
+                        env_vars=env_dict,
+                        volumes=volumes,
+                        network=self.config.get('network'),
+                        image=image_tag,
+                        platform_val=platform_val,
+                        user=None,
+                        additional_flags=['--hostname', self.config.get('hostname')] if self.config.get('hostname') else None
+                    )
                     
-                    # Add platform flag if specified
-                    platform_flag = ''
-                    if platform_val:
-                        platform_flag = f'--platform {platform_val}'
-                    
-                    # Add network flag
-                    network_flag = ''
-                    if self.config.get('network'):
-                        network_flag = f'--network {self.config["network"]}'
-                    
-                    # Add hostname flag
-                    hostname_flag = ''
-                    if self.config.get('hostname'):
-                        hostname_flag = f'--hostname {self.config["hostname"]}'
-                    
-                    script = f'''
-tell application "Terminal"
-    do script "docker run --rm -it --name {container_name} {platform_flag} {network_flag} {hostname_flag} {env_flags}{volume_flags} {image_tag} sh -c '{parsed_cmd}'"
-    activate
-end tell
-'''
-                    subprocess.Popen(['osascript', '-e', script])
-                    self.log_signal.emit(t('messages.started_in_terminal'))
+                    if success:
+                        self.log_signal.emit(f"\033[32m✓ Container launched in {launch_mode} mode\033[0m")
+                    else:
+                        self.log_signal.emit(f"\033[31m✗ Failed to launch container in {launch_mode} mode\033[0m")
+                        raise Exception(f"Failed to launch in {launch_mode} mode")
                 
                 elif launch_mode == 'api':
                     # Run using Docker API with logs window
@@ -318,37 +306,11 @@ end tell
                         self.log_signal.emit(f"Failed to start container: {e}")
                         raise
                 
-                elif launch_mode == 'custom':
-                    # Run with custom terminal command
-                    custom_cmd = settings.get('custom_terminal_command', '')
-                    if custom_cmd and '{command}' in custom_cmd:
-                        # Build docker run command
-                        env_flags = ' '.join([f'-e {k}={v}' for k, v in env_dict.items()])
-                        volume_flags = ''
-                        if volumes:
-                            for host_path, mount_info in volumes.items():
-                                container_path = mount_info['bind']
-                                mode = mount_info.get('mode', 'rw')
-                                volume_flags += f' -v {host_path}:{container_path}:{mode}'
-                        
-                        platform_flag = f'--platform {platform_val}' if platform_val else ''
-                        network_flag = f'--network {self.config.get("network")}' if self.config.get('network') else ''
-                        hostname_flag = f'--hostname {self.config.get("hostname")}' if self.config.get('hostname') else ''
-                        
-                        docker_cmd = f"docker run --rm -it --name {container_name} {platform_flag} {network_flag} {hostname_flag} {env_flags}{volume_flags} {image_tag} sh -c '{parsed_cmd}'"
-                        
-                        # Replace {command} with actual docker command
-                        final_cmd = custom_cmd.replace('{command}', docker_cmd)
-                        
-                        # Execute custom command
-                        subprocess.Popen(final_cmd, shell=True)
-                        self.log_signal.emit("Started with custom terminal command")
-                    else:
-                        self.log_signal.emit("Custom command not configured properly")
-                
                 else:
-                    # Fallback - run in background via API
-                    launch_mode = self.config.get('launch_mode', 'api')
+                    # Unknown mode - fallback to API
+                    self.log_signal.emit(f"\033[33mWarning: Unknown launch mode '{launch_mode}', using API\033[0m")
+                    launch_mode = 'api'
+                    
                     result = self.docker_manager.run_gui_app(
                         container_name,
                         startup_cmd,

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from src.plugin_api import TabPlugin
 from src.localization import t
 from src.gui.log_viewer_widget import LogViewerWidget
-
+import logging
 
 class ContainerLogsPlugin(TabPlugin):
     """Container logs viewer plugin"""
@@ -26,7 +26,7 @@ class ContainerLogsPlugin(TabPlugin):
         self.name = "Container Logs"
         self.version = "2.0.0"
         self.description = "View container logs with color coding"
-        self.author = "GhostContainers Team"
+        self.author = "GhostContainers"
         
         self.tab_widget = None
         self.log_container_combo = None
@@ -41,31 +41,32 @@ class ContainerLogsPlugin(TabPlugin):
     
     def create_tab_widget(self) -> QWidget:
         """Create the logs viewer tab"""
+        
         widget = QWidget()
         layout = QVBoxLayout(widget)
         
         # Container selector
         selector_layout = QHBoxLayout()
-        selector_layout.addWidget(QLabel(t('labels.container') + ":"))
+        selector_layout.addWidget(QLabel(t('labels.container') + ":", widget))
         
-        self.log_container_combo = QComboBox()
+        self.log_container_combo = QComboBox(widget)  # Set parent to widget
         self.log_container_combo.setMinimumWidth(200)
         selector_layout.addWidget(self.log_container_combo)
         
-        show_btn = QPushButton(t('labels.show_logs'))
+        show_btn = QPushButton(t('labels.show_logs'), widget)
         show_btn.clicked.connect(self.show_logs)
         selector_layout.addWidget(show_btn)
         
         selector_layout.addStretch()
         
         # Show all containers checkbox
-        self.show_all_check = QCheckBox(t('labels.show_all_containers'))
-        self.show_all_check.stateChanged.connect(self._refresh_container_list)
+        self.show_all_check = QCheckBox(t('labels.show_all_containers'), widget)
+        self.show_all_check.stateChanged.connect(self.refresh_container_list)
         selector_layout.addWidget(self.show_all_check)
         
         # Refresh button
-        refresh_btn = QPushButton(t('buttons.refresh'))
-        refresh_btn.clicked.connect(self._refresh_container_list)
+        refresh_btn = QPushButton(t('buttons.refresh'), widget)
+        refresh_btn.clicked.connect(self.refresh_container_list)
         selector_layout.addWidget(refresh_btn)
         
         layout.addLayout(selector_layout)
@@ -77,26 +78,29 @@ class ContainerLogsPlugin(TabPlugin):
         self.tab_widget = widget
         return widget
     
-    def on_tab_created(self):
-        """Called after tab widget is created and added to UI"""
-        # Refresh container list after tab is fully created
-        self._refresh_container_list()
-    
-    def _refresh_container_list(self):
-        """Refresh container list from PluginAPI"""
-        if not self.plugin_api or not self.log_container_combo:
+    def refresh_container_list(self):
+        """Refresh container list with current show_all setting"""
+        if not self.plugin_api:
             return
         
-        # Get show_all state
-        show_all = self.show_all_check.isChecked() if self.show_all_check else True
+        # Get show_all state from this plugin's checkbox
+        show_all = self.show_all_check.isChecked() if self.show_all_check else False
         
-        # Get containers using PluginAPI
+        # Get containers using PluginAPI with our show_all setting
         containers = self.plugin_api.get_containers(all_containers=True, show_all=show_all)
         self.update_containers(containers)
     
     def update_containers(self, containers):
         """Update container list (called by hook)"""
-        if not self.log_container_combo:
+        
+        # Check for None explicitly, not bool() because PyQt6 deleted widgets return False
+        if self.log_container_combo is None:
+            return
+        
+        # Additional check: try to access the widget to see if it's been deleted
+        try:
+            _ = self.log_container_combo.count()
+        except RuntimeError:
             return
         
         current_selection = self.log_container_combo.currentText()

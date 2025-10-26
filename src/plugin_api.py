@@ -79,6 +79,7 @@ class GUIPlugin(ABC):
     
     def register_hook(self, hook_name: str, callback: Callable):
         """Register a callback for a hook"""
+        
         self._registered_hooks[hook_name] = callback
         if self.plugin_api:
             self.plugin_api.add_hook(hook_name, callback)
@@ -205,6 +206,7 @@ class TabPlugin(GUIPlugin):
     
     def initialize(self, app_context: Dict[str, Any]) -> bool:
         """Initialize plugin with application context and create tab"""
+        
         # Call parent initialization
         if not super().initialize(app_context):
             return False
@@ -220,6 +222,7 @@ class TabPlugin(GUIPlugin):
         # Create and add tab
         try:
             widget = self.create_tab_widget()
+            
             title = self.get_tab_title()
             icon = self.get_tab_icon()
             
@@ -274,22 +277,17 @@ class PluginAPI:
         Returns:
             List of containers with information
         """
-        import logging
-        logger = logging.getLogger(__name__)
         
         docker_manager = self.app_context.get('docker_manager')
-        logger.info(f"PluginAPI.get_containers called: docker_manager={docker_manager is not None}, app_context keys={list(self.app_context.keys())}")
         
         if docker_manager:
-            containers = docker_manager.list_containers(all_containers=all_containers, show_all=show_all)
-            logger.info(f"PluginAPI.get_containers: returned {len(containers)} containers")
-            return containers
+            return docker_manager.list_containers(all_containers=all_containers, show_all=show_all)
         
-        logger.warning("PluginAPI.get_containers: docker_manager is None!")
         return []
     
     def add_hook(self, hook_name: str, callback: Callable):
         """Add a callback to a hook (creates hook if doesn't exist)"""
+        
         hook = self.register_hook(hook_name)
         hook.register(callback)
     
@@ -305,6 +303,7 @@ class PluginAPI:
     
     def execute_hook(self, hook_name: str, *args, **kwargs):
         """Execute all callbacks registered to a hook"""
+        
         hook = self.get_hook(hook_name)
         if hook:
             return hook.execute(*args, **kwargs)
